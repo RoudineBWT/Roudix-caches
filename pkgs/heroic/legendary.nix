@@ -25,6 +25,7 @@ python3Packages.buildPythonApplication (finalAttrs: {
     requests
     requests-futures
     filelock
+    pycryptodomex
   ];
 
   pythonImportsCheck = [ "legendary" ];
