@@ -33,7 +33,7 @@ stdenv.mkDerivation (finalAttrs: {
     owner = "Heroic-Games-Launcher";
     repo = "HeroicGamesLauncher";
     tag = "v${finalAttrs.version}";
-    hash = lib.fakeHash;
+    hash = "sha256-rgLmm9krjPYjSn/wGAYbnFw7kqvuu9IBipb4ibOClOw=";
   };
 
   pnpmDeps = fetchPnpmDeps {
