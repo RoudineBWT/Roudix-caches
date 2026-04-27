@@ -111,7 +111,7 @@ stdenv.mkDerivation (finalAttrs: {
     install -D "flatpak/com.heroicgameslauncher.hgl.desktop" "$out/share/applications/com.heroicgameslauncher.hgl.desktop"
     install -D "src/frontend/assets/heroic-icon.svg" "$out/share/icons/hicolor/scalable/apps/com.heroicgameslauncher.hgl.svg"
     substituteInPlace "$out/share/applications/com.heroicgameslauncher.hgl.desktop" \
-      --replace-fail "Exec=heroic-run --ozone-platform-hint=auto" "Exec=heroic"
+      --replace-fail "Exec=heroic-run %u" "Exec=heroic"
 
     runHook postInstall
   '';
