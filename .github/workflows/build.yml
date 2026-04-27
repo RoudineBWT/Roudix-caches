@@ -23,21 +23,17 @@ jobs:
 
       - name: Update heroic version and hashes
         run: |
-          # Récupère la dernière version depuis l'API GitHub
           LATEST=$(curl -fsSL \
             "https://api.github.com/repos/Heroic-Games-Launcher/HeroicGamesLauncher/releases/latest" \
             | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
           echo "Dernière version: $LATEST"
-
-          # nix-update met à jour version + src.hash + pnpmDeps.hash
-          # Le chemin pointe vers ton fichier dans pkgs/heroic/default.nix
           echo "LATEST=$LATEST" >> $GITHUB_ENV
 
+          # nix-update prend directement l'attribut comme argument positionnel
           nix run nixpkgs#nix-update -- \
             --version "$LATEST" \
             --flake \
-            --attr packages.x86_64-linux.heroic-custom \
-            heroic-custom
+            packages.x86_64-linux.heroic-custom
 
       - name: Build and push to cache
         run: nix build .#heroic-custom --print-build-logs
