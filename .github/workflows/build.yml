@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,28 +25,249 @@ jobs:
           name: roudix
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      - name: Update heroic version and hashes
+      # ── 1. Versions courantes extraites des fichiers nix ──────────────────
+      - name: Read current versions
+        id: current
         run: |
-          LATEST=$(curl -fsSL \
-            "https://api.github.com/repos/Heroic-Games-Launcher/HeroicGamesLauncher/releases/latest" \
-            | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-          echo "Dernière version: $LATEST"
-          echo "LATEST=$LATEST" >> $GITHUB_ENV
+          NIX="pkgs/heroic/default.nix"
+          LEG="pkgs/heroic/legendary.nix"
 
-          # nix-update prend directement l'attribut comme argument positionnel
-          nix run nixpkgs#nix-update -- \
-            --version "$LATEST" \
-            --flake \
-            packages.x86_64-linux.heroic-custom
+          HEROIC_CUR=$(grep -oP 'version\s*=\s*"\K[^"]+' "$NIX" | head -1)
+          LEG_CUR=$(grep    -oP 'version\s*=\s*"\K[^"]+' "$LEG" | head -1)
 
-      - name: Build and push to cache
-        run: nix build .#heroic-custom --print-build-logs
+          # Electron : on lit "electron_41" → 41
+          ELEC_MAJOR_CUR=$(grep -oP 'electron_\K\d+' "$NIX" | head -1)
 
-      - name: Commit changements si nouvelle version
+          # pnpm : on lit "pnpm_10_29_2" → 10.29.2
+          PNPM_CUR=$(grep -oP 'pnpm_\K[\d_]+' "$NIX" | head -1 | tr '_' '.')
+
+          echo "heroic=$HEROIC_CUR"      >> "$GITHUB_OUTPUT"
+          echo "legendary=$LEG_CUR"      >> "$GITHUB_OUTPUT"
+          echo "electron=$ELEC_MAJOR_CUR" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$PNPM_CUR"          >> "$GITHUB_OUTPUT"
+
+          echo "=== Versions actuelles ==="
+          echo "heroic:   $HEROIC_CUR"
+          echo "legendary: $LEG_CUR"
+          echo "electron:  $ELEC_MAJOR_CUR"
+          echo "pnpm:      $PNPM_CUR"
+
+      # ── 2. Versions upstream ──────────────────────────────────────────────
+      - name: Fetch upstream versions
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Heroic (Heroic-Games-Launcher/HeroicGamesLauncher)
+          HEROIC_TAG=$(gh release view --repo Heroic-Games-Launcher/HeroicGamesLauncher \
+            --json tagName -q .tagName)
+          HEROIC_NEW="${HEROIC_TAG#v}"
+
+          # Legendary fork d'Heroic (Heroic-Games-Launcher/legendary)
+          LEG_TAG=$(gh release view --repo Heroic-Games-Launcher/legendary \
+            --json tagName -q .tagName)
+          LEG_NEW="${LEG_TAG#v}"
+
+          # Electron et pnpm : lire le package.json du tag Heroic
+          PKG=$(curl -fsSL \
+            "https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/${HEROIC_TAG}/package.json")
+
+          # Electron version (ex: "^36.0.0" → major = 36)
+          ELEC_RAW=$(echo "$PKG" | jq -r '.devDependencies.electron')
+          ELEC_MAJOR=$(echo "$ELEC_RAW" | grep -oP '\d+' | head -1)
+
+          # pnpm version depuis "packageManager": "pnpm@10.9.0+sha512...."
+          PNPM_NEW=$(echo "$PKG" | jq -r '.packageManager // ""' \
+            | grep -oP 'pnpm@\K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+
+          echo "heroic=$HEROIC_NEW"      >> "$GITHUB_OUTPUT"
+          echo "heroic_tag=$HEROIC_TAG"  >> "$GITHUB_OUTPUT"
+          echo "legendary=$LEG_NEW"      >> "$GITHUB_OUTPUT"
+          echo "electron=$ELEC_MAJOR"    >> "$GITHUB_OUTPUT"
+          echo "pnpm=$PNPM_NEW"          >> "$GITHUB_OUTPUT"
+
+          echo "=== Versions upstream ==="
+          echo "heroic:    $HEROIC_NEW"
+          echo "legendary: $LEG_NEW"
+          echo "electron:  $ELEC_MAJOR"
+          echo "pnpm:      $PNPM_NEW"
+
+      # ── 3. Détecter ce qui a changé ───────────────────────────────────────
+      - name: Detect changes
+        id: changes
+        run: |
+          HEROIC_CHANGED=false
+          LEG_CHANGED=false
+          ELEC_CHANGED=false
+          PNPM_CHANGED=false
+          ANY=false
+
+          [ "${{ steps.upstream.outputs.heroic }}"   != "${{ steps.current.outputs.heroic }}"   ] && HEROIC_CHANGED=true && ANY=true
+          [ "${{ steps.upstream.outputs.legendary }}" != "${{ steps.current.outputs.legendary }}" ] && LEG_CHANGED=true   && ANY=true
+          [ "${{ steps.upstream.outputs.electron }}"  != "${{ steps.current.outputs.electron }}"  ] && ELEC_CHANGED=true  && ANY=true
+          [ -n "${{ steps.upstream.outputs.pnpm }}" ] && \
+            [ "${{ steps.upstream.outputs.pnpm }}" != "${{ steps.current.outputs.pnpm }}" ] && PNPM_CHANGED=true && ANY=true
+
+          echo "heroic=$HEROIC_CHANGED"     >> "$GITHUB_OUTPUT"
+          echo "legendary=$LEG_CHANGED"     >> "$GITHUB_OUTPUT"
+          echo "electron=$ELEC_CHANGED"     >> "$GITHUB_OUTPUT"
+          echo "pnpm=$PNPM_CHANGED"         >> "$GITHUB_OUTPUT"
+          echo "any=$ANY"                   >> "$GITHUB_OUTPUT"
+
+          echo "=== Changements détectés ==="
+          echo "heroic:    $HEROIC_CHANGED"
+          echo "legendary: $LEG_CHANGED"
+          echo "electron:  $ELEC_CHANGED"
+          echo "pnpm:      $PNPM_CHANGED"
+
+      # ── 4. Calcul des hashes ──────────────────────────────────────────────
+      # On recalcule tous les hashes si heroic ou electron ou pnpm ont changé,
+      # et le hash legendary séparément s'il a changé.
+      - name: Compute heroic src hash
+        if: steps.changes.outputs.heroic == 'true'
+        id: hash_heroic_src
+        run: |
+          TAG="${{ steps.upstream.outputs.heroic_tag }}"
+          HASH=$(nix-prefetch-url --unpack \
+            "https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/archive/refs/tags/${TAG}.tar.gz" \
+            2>/dev/null | tail -1 | xargs nix hash to-sri --type sha256)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "heroic src hash: $HASH"
+
+      - name: Compute pnpm deps hash
+        # Nécessaire si heroic, electron ou pnpm ont changé (le lockfile change)
+        if: >-
+          steps.changes.outputs.heroic == 'true' ||
+          steps.changes.outputs.electron == 'true' ||
+          steps.changes.outputs.pnpm == 'true'
+        id: hash_pnpm
+        run: |
+          TAG="${{ steps.upstream.outputs.heroic_tag }}"
+
+          # Télécharger le pnpm-lock.yaml du tag
+          curl -fsSLo /tmp/pnpm-lock.yaml \
+            "https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/${TAG}/pnpm-lock.yaml"
+
+          # prefetch-pnpm-deps calcule le hash fetcherVersion=3
+          HASH=$(nix run nixpkgs#prefetch-pnpm-deps -- /tmp/pnpm-lock.yaml 2>/dev/null | tail -1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "pnpm deps hash: $HASH"
+
+      - name: Compute legendary hash
+        if: steps.changes.outputs.legendary == 'true'
+        id: hash_legendary
+        run: |
+          VER="${{ steps.upstream.outputs.legendary }}"
+          HASH=$(nix-prefetch-url --unpack \
+            "https://github.com/Heroic-Games-Launcher/legendary/archive/refs/tags/${VER}.tar.gz" \
+            2>/dev/null | tail -1 | xargs nix hash to-sri --type sha256)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "legendary hash: $HASH"
+
+      # ── 5. Patcher les fichiers nix ───────────────────────────────────────
+      - name: Patch default.nix
+        if: steps.changes.outputs.any == 'true'
+        env:
+          HEROIC_NEW:   ${{ steps.upstream.outputs.heroic }}
+          ELEC_MAJOR:   ${{ steps.upstream.outputs.electron }}
+          PNPM_NEW:     ${{ steps.upstream.outputs.pnpm }}
+          SRC_HASH:     ${{ steps.hash_heroic_src.outputs.hash }}
+          PNPM_HASH:    ${{ steps.hash_pnpm.outputs.hash }}
+          ELEC_CHANGED: ${{ steps.changes.outputs.electron }}
+          PNPM_CHANGED: ${{ steps.changes.outputs.pnpm }}
+          HEROIC_CHANGED: ${{ steps.changes.outputs.heroic }}
+        run: |
+          NIX="pkgs/heroic/default.nix"
+
+          # ── version heroic ───────────────────────────────────────────────
+          if [ "$HEROIC_CHANGED" = "true" ]; then
+            sed -i "s|version = \"[^\"]*\"|version = \"${HEROIC_NEW}\"|" "$NIX"
+            sed -i "s|hash = \"sha256-[^\"]*\"|hash = \"${SRC_HASH}\"|" "$NIX"
+          fi
+
+          # ── pnpmDeps hash ────────────────────────────────────────────────
+          if [ -n "$PNPM_HASH" ]; then
+            # Le 2ème hash = celui de pnpmDeps (on cible la 2ème occurrence)
+            awk -v new="$PNPM_HASH" '
+              /hash = "sha256-/ { count++; if (count == 2) { sub(/sha256-[^"]*/, "sha256-" substr(new, 8)); } }
+              { print }
+            ' "$NIX" > /tmp/default.nix.tmp && mv /tmp/default.nix.tmp "$NIX"
+          fi
+
+          # ── electron_NN ──────────────────────────────────────────────────
+          if [ "$ELEC_CHANGED" = "true" ] && [ -n "$ELEC_MAJOR" ]; then
+            CUR_ELEC=$(grep -oP 'electron_\K\d+' "$NIX" | head -1)
+            sed -i "s|electron_${CUR_ELEC}|electron_${ELEC_MAJOR}|g" "$NIX"
+          fi
+
+          # ── pnpm_X_Y_Z ───────────────────────────────────────────────────
+          if [ "$PNPM_CHANGED" = "true" ] && [ -n "$PNPM_NEW" ]; then
+            CUR_PNPM=$(grep -oP 'pnpm_\K[\d_]+' "$NIX" | head -1)
+            PNPM_UNDERSCORE=$(echo "$PNPM_NEW" | tr '.' '_')
+            sed -i "s|pnpm_${CUR_PNPM}|pnpm_${PNPM_UNDERSCORE}|g" "$NIX"
+          fi
+
+          echo "=== default.nix après patch ==="
+          git diff "$NIX"
+
+      - name: Patch legendary.nix
+        if: steps.changes.outputs.legendary == 'true'
+        env:
+          LEG_NEW:  ${{ steps.upstream.outputs.legendary }}
+          LEG_HASH: ${{ steps.hash_legendary.outputs.hash }}
+        run: |
+          LEG="pkgs/heroic/legendary.nix"
+          sed -i "s|version = \"[^\"]*\"|version = \"${LEG_NEW}\"|"   "$LEG"
+          sed -i "s|hash = \"sha256-[^\"]*\"|hash = \"${LEG_HASH}\"|" "$LEG"
+
+          echo "=== legendary.nix après patch ==="
+          git diff "$LEG"
+
+      # ── 6. Build + push cachix ────────────────────────────────────────────
+      - name: Build heroic-custom
+        if: steps.changes.outputs.any == 'true'
+        run: |
+          nix build .#heroic-custom --print-build-logs
+
+      # ── 7. Pull Request ───────────────────────────────────────────────────
+      - name: Build PR description
+        if: steps.changes.outputs.any == 'true'
+        id: pr_body
+        run: |
+          BODY="## Mise à jour automatique"$'\n\n'
+          BODY+="| Package | Avant | Après |"$'\n'
+          BODY+="|---|---|---|"$'\n'
+
+          [ "${{ steps.changes.outputs.heroic }}"    = "true" ] && \
+            BODY+="| **heroic** | \`${{ steps.current.outputs.heroic }}\` | \`${{ steps.upstream.outputs.heroic }}\` |"$'\n'
+          [ "${{ steps.changes.outputs.legendary }}" = "true" ] && \
+            BODY+="| **legendary** | \`${{ steps.current.outputs.legendary }}\` | \`${{ steps.upstream.outputs.legendary }}\` |"$'\n'
+          [ "${{ steps.changes.outputs.electron }}"  = "true" ] && \
+            BODY+="| **electron** | \`${{ steps.current.outputs.electron }}\` | \`${{ steps.upstream.outputs.electron }}\` |"$'\n'
+          [ "${{ steps.changes.outputs.pnpm }}"      = "true" ] && \
+            BODY+="| **pnpm** | \`${{ steps.current.outputs.pnpm }}\` | \`${{ steps.upstream.outputs.pnpm }}\` |"$'\n'
+
+          BODY+=$'\n'"Release: https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases/tag/${{ steps.upstream.outputs.heroic_tag }}"
+
+          # Multiline output
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "body<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY"      >> "$GITHUB_OUTPUT"
+          echo "$EOF"       >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.any == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "heroic: update to ${{ env.LATEST }}"
-          title: "heroic: auto-update vers ${{ env.LATEST }}"
-          branch: update/heroic
+          branch: "update/heroic-${{ steps.upstream.outputs.heroic }}"
           delete-branch: true
+          commit-message: |
+            heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}
+
+            legendary: ${{ steps.current.outputs.legendary }} → ${{ steps.upstream.outputs.legendary }}
+            electron:  ${{ steps.current.outputs.electron }} → ${{ steps.upstream.outputs.electron }}
+            pnpm:      ${{ steps.current.outputs.pnpm }} → ${{ steps.upstream.outputs.pnpm }}
+          title: "heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}"
+          body: ${{ steps.pr_body.outputs.body }}
+          labels: "automated,update"
