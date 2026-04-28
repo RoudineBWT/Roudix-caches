@@ -3,43 +3,39 @@ name: Update & build scxctl
 on:
   schedule:
     - cron: "0 4 * * *"   # tous les jours à 4h UTC
-  workflow_dispatch:        # déclenchement manuel possible
+  workflow_dispatch:
 
 permissions:
-  contents: write           # pour push le commit de mise à jour
-  pull-requests: write
+  contents: write
 
 jobs:
   check-and-build:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ────────────────────────────────────────────────────
       - uses: actions/checkout@v4
 
-      # ── 2. Installer Nix ───────────────────────────────────────────────
       - uses: cachix/install-nix-action@v26
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
             accept-flake-config = true
 
-      # ── 3. Connecter Cachix ────────────────────────────────────────────
       - uses: cachix/cachix-action@v14
         with:
           name: roudix
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      # ── 4. Récupérer la dernière version upstream ──────────────────────
-      - name: Get latest scx release
+      # ── 1. Dernière version de scx-loader (pas scx !) ─────────────────
+      - name: Get latest scx-loader release
         id: upstream
         run: |
-          VERSION=$(curl -s https://api.github.com/repos/sched-ext/scx/releases/latest \
+          VERSION=$(curl -s https://api.github.com/repos/sched-ext/scx-loader/releases/latest \
             | jq -r '.tag_name' | sed 's/^v//')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Latest scx version: $VERSION"
+          echo "Latest scx-loader version: $VERSION"
 
-      # ── 5. Lire la version actuelle dans le flake ──────────────────────
+      # ── 2. Version actuelle dans le repo ──────────────────────────────
       - name: Get current version in repo
         id: current
         run: |
@@ -48,7 +44,7 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Current version in repo: $VERSION"
 
-      # ── 6. Skip si déjà à jour ────────────────────────────────────────
+      # ── 3. Skip si déjà à jour ────────────────────────────────────────
       - name: Check if update needed
         id: check
         run: |
@@ -57,68 +53,60 @@ jobs:
             echo "Already up to date, skipping."
           else
             echo "needed=true" >> $GITHUB_OUTPUT
-            echo "Update needed: ${{ steps.current.outputs.version }} → ${{ steps.upstream.outputs.version }}"
+            echo "Update: ${{ steps.current.outputs.version }} → ${{ steps.upstream.outputs.version }}"
           fi
 
-      # ── 7. Calculer les nouveaux hashes ───────────────────────────────
+      # ── 4. Calculer le src hash ───────────────────────────────────────
       - name: Calculate src hash
         if: steps.check.outputs.needed == 'true'
         id: src_hash
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
           HASH=$(nix-prefetch-url --unpack \
-            "https://github.com/sched-ext/scx/archive/v${VERSION}.tar.gz" 2>/dev/null \
+            "https://github.com/sched-ext/scx-loader/archive/v${VERSION}.tar.gz" 2>/dev/null \
             | tail -1)
-          # Convertir en format sri (sha256-...)
           SRI=$(nix hash convert --hash-algo sha256 --to sri "$HASH" 2>/dev/null || \
                 nix hash to-sri --type sha256 "$HASH" 2>/dev/null)
           echo "hash=$SRI" >> $GITHUB_OUTPUT
           echo "src hash: $SRI"
 
-      - name: Update scxctl.nix with new version and src hash
+      # ── 5. Mettre à jour version + src hash ───────────────────────────
+      - name: Update version and src hash
         if: steps.check.outputs.needed == 'true'
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
           SRC_HASH="${{ steps.src_hash.outputs.hash }}"
-          # Mettre à jour version
           sed -i "s/version\s*=\s*\"[^\"]*\"/version   = \"${VERSION}\"/" pkgs/scxctl.nix
-          # Mettre à jour src hash (première occurrence de hash =)
           sed -i "0,/hash\s*=\s*\"[^\"]*\"/s||hash   = \"${SRC_HASH}\"|" pkgs/scxctl.nix
 
-      - name: Get cargo hash via failed build
+      # ── 6. Obtenir le cargo hash via build raté ───────────────────────
+      - name: Get cargo hash
         if: steps.check.outputs.needed == 'true'
         id: cargo_hash
         run: |
-          # On provoque le build pour que Nix nous donne le bon cargoHash
-          # Mettre un hash vide pour forcer l'erreur informative
           sed -i "s/cargoHash\s*=\s*\"[^\"]*\"/cargoHash = \"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"/" pkgs/scxctl.nix
-
-          # Tenter le build — extraire le hash attendu depuis l'erreur
           BUILD_OUT=$(nix build .#scxctl 2>&1 || true)
           CARGO_HASH=$(echo "$BUILD_OUT" | grep -oP 'got:\s*\K(sha256-[A-Za-z0-9+/=]+)' | head -1)
-
           if [ -z "$CARGO_HASH" ]; then
-            echo "Could not extract cargoHash from build output"
+            echo "Could not extract cargoHash:"
             echo "$BUILD_OUT"
             exit 1
           fi
-
           echo "hash=$CARGO_HASH" >> $GITHUB_OUTPUT
           echo "cargo hash: $CARGO_HASH"
 
-      - name: Update cargoHash in scxctl.nix
+      - name: Update cargoHash
         if: steps.check.outputs.needed == 'true'
         run: |
-          CARGO_HASH="${{ steps.cargo_hash.outputs.hash }}"
-          sed -i "s/cargoHash\s*=\s*\"[^\"]*\"/cargoHash = \"${CARGO_HASH}\"/" pkgs/scxctl.nix
+          sed -i "s/cargoHash\s*=\s*\"[^\"]*\"/cargoHash = \"${{ steps.cargo_hash.outputs.hash }}\"/" pkgs/scxctl.nix
 
-      # ── 8. Build final et push Cachix ─────────────────────────────────
-      - name: Build scxctl and push to Cachix
+      # ── 7. Build final + push Cachix ──────────────────────────────────
+      - name: Build and push to Cachix
         if: steps.check.outputs.needed == 'true'
         run: |
           nix build .#scxctl --print-out-paths | cachix push roudix
 
-      # ── 9. Commit et push la mise à jour ──────────────────────────────
+      # ── 8. Commit ─────────────────────────────────────────────────────
       - name: Commit updated scxctl.nix
         if: steps.check.outputs.needed == 'true'
         run: |

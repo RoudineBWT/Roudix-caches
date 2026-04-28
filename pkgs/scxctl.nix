@@ -1,38 +1,30 @@
-# ── scxctl — dérivation Nix locale ───────────────────────────────────────────
-# À mettre dans ton flake, par exemple :
-# hosts/roudix/pkgs/scxctl.nix
-#
-# Puis dans common.nix ou gaming.nix :
-#   environment.systemPackages = [ (pkgs.callPackage ./pkgs/scxctl.nix { }) ];
+# pkgs/scxctl.nix
+# scxctl a été séparé du repo sched-ext/scx dans son propre repo : sched-ext/scx-loader
+# https://github.com/sched-ext/scx-loader
 
-{ lib, rustPlatform, fetchFromGitHub, pkg-config, clang, elfutils, zlib, bpftools }:
+{ lib, rustPlatform, fetchFromGitHub, pkg-config }:
 
 rustPlatform.buildRustPackage rec {
   pname   = "scxctl";
-  version = "1.0.9";   # mets à jour selon la dernière release
+  version = "0.2.0";  # mets à jour selon la dernière release de scx-loader
 
   src = fetchFromGitHub {
     owner  = "sched-ext";
-    repo   = "scx";
+    repo   = "scx-loader";
     rev    = "v${version}";
-    # obtiens le hash avec :
-    #   nix-prefetch-url --unpack https://github.com/sched-ext/scx/archive/v1.0.9.tar.gz
+    # nix-prefetch-url --unpack https://github.com/sched-ext/scx-loader/archive/v0.2.0.tar.gz
     hash   = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
 
-  # On ne build QUE scxctl, pas tous les schedulers
-  buildAndTestSubdir = "rust/scxctl";
-
   cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-  # même principe : nix will tell you the correct hash on first build
 
-  nativeBuildInputs = [ pkg-config clang ];
-  buildInputs       = [ elfutils zlib ];
+  nativeBuildInputs = [ pkg-config ];
 
   meta = {
-    description = "CLI tool to control sched-ext (SCX) schedulers";
-    homepage    = "https://github.com/sched-ext/scx";
+    description = "CLI client for scx_loader — switch sched-ext schedulers at runtime";
+    homepage    = "https://github.com/sched-ext/scx-loader";
     license     = lib.licenses.gpl2Only;
     platforms   = lib.platforms.linux;
+    mainProgram = "scxctl";
   };
 }
