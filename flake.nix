@@ -8,6 +8,7 @@
   in {
     packages.x86_64-linux = {
       heroic-custom = pkgs.callPackage ./pkgs/heroic/default.nix {};
+      scxctl        = pkgs.callPackage ./pkgs/scxctl.nix {};
     };
   };
 }

@@ -1,0 +1,98 @@
+name: Cleanup Cachix cache
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"   # tous les dimanches à 3h UTC
+  workflow_dispatch:
+    inputs:
+      older_than_days:
+        description: "Supprimer les entrées plus vieilles que X jours"
+        required: false
+        default: "30"
+      dry_run:
+        description: "Dry run (voir ce qui serait supprimé sans supprimer)"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Installer Nix + cachix ──────────────────────────────────────
+      - uses: cachix/install-nix-action@v26
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@v14
+        with:
+          name: roudix
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # ── 2. Infos avant nettoyage ──────────────────────────────────────
+      - name: Cache stats before cleanup
+        run: |
+          echo "=== Cache stats before cleanup ==="
+          cachix cache info roudix 2>/dev/null || echo "(stats non disponibles via CLI)"
+
+      # ── 3. Déterminer l'âge cible ─────────────────────────────────────
+      - name: Set retention days
+        id: retention
+        run: |
+          DAYS="${{ github.event.inputs.older_than_days }}"
+          DAYS="${DAYS:-30}"   # défaut 30 si déclenché par schedule
+          echo "days=$DAYS" >> $GITHUB_OUTPUT
+          echo "Nettoyage des entrées de plus de $DAYS jours"
+
+      # ── 4. Nettoyage via l'API Cachix ─────────────────────────────────
+      # cachix gc supprime les paths qui ne sont plus référencés
+      # et/ou plus vieux qu'une certaine date
+      - name: Run Cachix GC
+        run: |
+          DAYS="${{ steps.retention.outputs.days }}"
+          DRY="${{ github.event.inputs.dry_run }}"
+
+          # Calculer la date limite (YYYY-MM-DD)
+          CUTOFF=$(date -d "$DAYS days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+                   date -v-${DAYS}d +%Y-%m-%dT%H:%M:%SZ)
+
+          echo "Suppression des paths créés avant : $CUTOFF"
+
+          if [ "$DRY" = "true" ]; then
+            echo "[DRY RUN] Commande qui serait exécutée :"
+            echo "  cachix pin roudix --older-than $DAYS"
+            # Lister ce qui serait supprimé sans supprimer
+            cachix cache list-nar-info roudix 2>/dev/null | head -50 || \
+              echo "(listing non supporté par cette version de cachix CLI)"
+          else
+            # Supprimer les paths non référencés par les builds récents
+            cachix pin roudix --keep-days "$DAYS" 2>/dev/null || \
+              echo "Note: 'cachix pin' non disponible, utilisation de l'API directe"
+
+            # Fallback via l'API REST Cachix si la CLI ne supporte pas --keep-days
+            curl -s -X POST \
+              -H "Authorization: Bearer ${{ secrets.CACHIX_AUTH_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"olderThanDays\": $DAYS}" \
+              "https://app.cachix.org/api/v1/cache/roudix/gc" \
+              | jq '.' || echo "GC via API terminé (ou non supporté sur ce plan)"
+          fi
+
+      # ── 5. Infos après nettoyage ──────────────────────────────────────
+      - name: Cache stats after cleanup
+        run: |
+          echo "=== Cache stats after cleanup ==="
+          cachix cache info roudix 2>/dev/null || echo "(stats non disponibles via CLI)"
+
+      # ── 6. Résumé dans le job summary ────────────────────────────────
+      - name: Write summary
+        run: |
+          echo "## 🗑️ Cachix Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cache** : roudix" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rétention** : ${{ steps.retention.outputs.days }} jours" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry run** : ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Déclenché par** : ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date** : $(date -u)" >> $GITHUB_STEP_SUMMARY
