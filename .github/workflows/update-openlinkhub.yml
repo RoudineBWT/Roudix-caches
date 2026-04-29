@@ -1,0 +1,78 @@
+name: Update OpenLinkHub
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # toutes les nuits à 3h UTC
+  workflow_dispatch:        # déclenchement manuel possible
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Fetch latest OpenLinkHub release
+        id: release
+        run: |
+          LATEST=$(curl -s https://api.github.com/repos/jurkovic-nikola/OpenLinkHub/releases/latest \
+            | jq -r .tag_name)
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest version: $LATEST"
+
+      - name: Get current version
+        id: current
+        run: |
+          CURRENT=$(grep 'version = ' pkgs/openlinkhub/default.nix \
+            | head -1 | grep -oP '"\K[^"]+')
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "Current version: $CURRENT"
+
+      - name: Check if update needed
+        id: check
+        run: |
+          if [ "${{ steps.release.outputs.version }}" = "${{ steps.current.outputs.version }}" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Update needed: ${{ steps.current.outputs.version }} → ${{ steps.release.outputs.version }}"
+          fi
+
+      - name: Compute new hash
+        if: steps.check.outputs.needed == 'true'
+        id: hash
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          URL="https://github.com/jurkovic-nikola/OpenLinkHub/releases/download/${VERSION}/OpenLinkHub_${VERSION}_amd64.tar.gz"
+          RAW_HASH=$(nix-prefetch-url --type sha256 "$URL" 2>/dev/null | tail -1)
+          SRI_HASH=$(nix hash convert --hash-algo sha256 --to sri "$RAW_HASH")
+          echo "sri=$SRI_HASH" >> "$GITHUB_OUTPUT"
+          echo "Hash: $SRI_HASH"
+
+      - name: Patch default.nix
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          HASH="${{ steps.hash.outputs.sri }}"
+          sed -i "s|version = \".*\";|version = \"${VERSION}\";|" pkgs/openlinkhub/default.nix
+          sed -i "s|sha256  = \".*\";|sha256  = \"${HASH}\";|"    pkgs/openlinkhub/default.nix
+          echo "Patched default.nix:"
+          grep -E 'version|sha256' pkgs/openlinkhub/default.nix
+
+      - name: Commit & push
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pkgs/openlinkhub/default.nix
+          git commit -m "openlinkhub: ${{ steps.current.outputs.version }} → ${{ steps.release.outputs.version }}"
+          git push
