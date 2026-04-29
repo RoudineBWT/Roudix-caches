@@ -23,17 +23,17 @@ jobs:
       - name: Fetch latest OpenLinkHub release
         id: release
         run: |
-          CURRENT=$(grep -oP 'version\s*=\s*"\K[^"]+' pkgs/openlinkhub/default.nix | head -1)
-          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
-          echo "Current version: ${CURRENT}"
+          LATEST=$(curl -s https://api.github.com/repos/jurkovic-nikola/OpenLinkHub/releases/latest \
+            | jq -r .tag_name)
+          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest version: $LATEST"
 
       - name: Get current version
         id: current
         run: |
-          CURRENT=$(grep 'version = ' pkgs/openlinkhub/default.nix \
-            | head -1 | grep -oP '"\K[^"]+')
-          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "Current version: $CURRENT"
+          CURRENT=$(grep -oP 'version\s*=\s*"\K[^"]+' pkgs/openlinkhub/default.nix | head -1)
+          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "Current version: ${CURRENT}"
 
       - name: Check if update needed
         id: check
