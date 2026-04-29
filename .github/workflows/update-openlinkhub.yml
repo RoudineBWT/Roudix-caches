@@ -2,8 +2,8 @@ name: Update OpenLinkHub
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # toutes les nuits à 3h UTC
-  workflow_dispatch:        # déclenchement manuel possible
+    - cron: "0 3 * * *" # toutes les nuits à 3h UTC
+  workflow_dispatch: # déclenchement manuel possible
 
 jobs:
   update:
@@ -23,10 +23,9 @@ jobs:
       - name: Fetch latest OpenLinkHub release
         id: release
         run: |
-          LATEST=$(curl -s https://api.github.com/repos/jurkovic-nikola/OpenLinkHub/releases/latest \
-            | jq -r .tag_name)
-          echo "version=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "Latest version: $LATEST"
+          CURRENT=$(grep -oP 'version\s*=\s*"\K[^"]+' pkgs/openlinkhub/default.nix | head -1)
+          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "Current version: ${CURRENT}"
 
       - name: Get current version
         id: current
