@@ -20,6 +20,11 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
       # Nécessaire pour que nix-update puisse faire git commit
       - name: Configure git identity
         run: |
@@ -58,3 +63,11 @@ jobs:
       # Si rien n'a changé (déjà à jour), git push ne fait rien.
       - name: Push updates
         run: git push origin main
+
+      # Build tous les packages — cachix-action intercepte automatiquement
+      # les sorties et les pousse vers cache.cachix.org/roudix
+      - name: Build lutris-custom
+        run: nix build .#lutris-custom --print-build-logs
+
+      - name: Build faugus
+        run: nix build .#faugus --print-build-logs
