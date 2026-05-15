@@ -1,0 +1,235 @@
+Surface Steam compat-tools dir, filter PIDs by union, skip orphan kill, scrub env via cmd
+
+Four GLF-OS-only changes bundled in this patch, each one needed
+to make EA App / Origin / Battle.net launchers work end-to-end
+from Lutris (EA App login + start + actually launch a game).
+
+1. lutris/util/wine/proton.py: also yield the user's Steam
+   compatibility-tools directory in `_iter_proton_locations()`.
+   Vanilla Lutris only scans `settings.WINE_DIR` and Steam library
+   `common/` subdirs; Proton dropped in by
+   `programs.steam.extraCompatPackages`, our systemd-user
+   `glf-proton-{ge,cachyos}-link`, or downloaded via Faugus is
+   invisible to Lutris. Without this, EA App's yml requests
+   UMU-Proton-10.0-4 but `is_proton_version()` returns False,
+   `Wine.get_executable()` falls back to wine-ge (plain wine, no
+   umu, no pressure-vessel), the umu-built prefix immediately
+   crashes under bare wine, and EALauncher.exe dies in seconds.
+
+2. lutris/runners/wine.py (filter_game_pids): switch from
+   intersection to union for Proton paths.
+   Once change (1) routes the launch through umu-run, the Proton
+   branch returns `(folder_pids & uuid_pids) | gamescope_pids`.
+   EA App spawns children with CreateProcess(...,
+   inheritEnv=false, ...), so EADesktop / game wine64 hosts lose
+   LUTRIS_GAME_UUID. The intersection collapses, beat() sees no
+   tracked PIDs as soon as EALauncher.exe exits ~30 ms in. Union
+   keeps a process counted as "ours" if EITHER its cmdline lives
+   in the prefix container OR it carries the UUID.
+
+3. lutris/game.py (beat): stop killing wine processes when
+   game_thread dies but tracked PIDs still alive.
+   Vanilla beat() has two on_game_quit branches: (a) game_thread
+   dead AND game_pids empty; (b) game_thread dead AND game_pids
+   non-empty -> `force_stop_game(pids)` (== wineserver -k). For
+   launcher patterns, branch (b) is the killer: EALauncher dies
+   ~30 ms in, change (2) means game_pids contains EADesktop &
+   friends, Lutris winekills the entire prefix within 5 s of
+   the user clicking Play. Turn (b) into a no-op: keep watching
+   until game_pids legitimately reaches zero.
+
+4. lutris/runners/wine.py (get_command): inject `env -u VAR ...`
+   before the wine command to scrub Linux/desktop env vars EA
+   App's serializer cannot handle.
+   EA App's eax::foundation::serializeEnvironmentImpl caps the
+   env block it can pass to a child game process at ~32 KiB. On
+   NixOS the GNOME/KDE session env baseline is ~17 KiB and once
+   umu-launcher injects pressure-vessel + Steam Runtime
+   LD_LIBRARY_PATH/STEAM_COMPAT_*/WINEDLLOVERRIDES, the env
+   crosses 40 KiB and EA logs "Cannot serialize environment:
+   too long, NNNNN" + InvalidEnvironmentData on every game
+   launch.
+
+   We do this scrub *in the command list* (`env -u VAR1 -u
+   VAR2 ... gamemoderun umu-run game.exe`) rather than in
+   MonitoredCommand.get_child_environment. The previous attempt
+   to scrub via get_child_environment broke the lutris-wrapper
+   Python script that monitors children -- it lost critical env
+   vars, exited within ~2 seconds without ever writing the
+   /tmp/lutris-<UUID> status file, and Lutris saw "Game still
+   running ... very short time, did it crash?" three times in a
+   row when the user clicked Play. Pushing the scrub down to the
+   command list keeps lutris-wrapper's env intact while still
+   delivering a scrubbed env to the actual Wine subprocess via
+   `env -u`.
+
+Drop list mirrors the Faugus scrub
+(pkgs/faugus-launcher/runner-protonfixes.patch):
+  GNOME/GTK/Nix:    GI_TYPELIB_PATH, GTK_PATH, GIO_*,
+                    GSETTINGS_SCHEMA_DIR, NIX_PROFILES, ...
+  KDE/Plasma:       KDEDIRS, KDE_FULL_SESSION, KIO_*, ...
+  XDG dirs:         XDG_DATA_DIRS, XDG_CONFIG_DIRS
+                    (desktop-identifier vars KEPT, see below)
+  Qt theming:       QT_PLUGIN_PATH, QT_QPA_PLATFORMTHEME, ...
+  Cursors/docs:     XCURSOR_PATH, INFOPATH, MANPATH, ...
+  Linux interpreters: PERLLIB, PERL5LIB, PYTHONPATH
+
+KEPT: GST_PLUGIN_* (winegstreamer), XDG_*_HOME (Wine shader
+cache), XDG_SESSION_TYPE (X11/Wayland), PATH, LD_LIBRARY_PATH,
+LD_PRELOAD, HOME, USER, DISPLAY, WAYLAND_DISPLAY, XAUTHORITY,
+XDG_RUNTIME_DIR, DBUS_SESSION_BUS_ADDRESS, WINE*/PROTON*/
+STEAM*/UMU*/GAMEID/STORE, LANG/LC_*/TZ, PULSE_*/ALSA_*,
+VK_ICD_FILENAMES/VK_LAYER_PATH, __NV_*/__GL_*/DXVK_*/VKD3D_*,
+and the desktop-identifier vars XDG_CURRENT_DESKTOP /
+XDG_SESSION_DESKTOP / XDG_SESSION_CLASS / DESKTOP_SESSION
+(< 100 bytes total but Mutter / GNOME Shell / dash-to-dock
+need them to drive the dock auto-hide on Wine fullscreen
+windows -- without them the in-game window does not trigger
+the _NET_WM_STATE_FULLSCREEN handshake and the dock stays
+visible over the game).
+
+The non-Proton wine fallback (`super().filter_game_pids(...)`)
+is unchanged.
+--- a/lutris/runners/wine.py
++++ b/lutris/runners/wine.py
+@@ -853,6 +853,62 @@
+             if proton.is_umu_path(command[0]) and self.wine_arch == "win32":
+                 raise RuntimeError(_("Proton is not compatible with 32-bit prefixes."))
+ 
++            # GLF-OS: prepend `env -u VAR ...` to the wine command to scrub
++            # Linux/desktop env vars EA App's serializer cannot handle.
++            # This is intentionally inserted *here* (in the command list)
++            # rather than in MonitoredCommand.get_child_environment so the
++            # lutris-wrapper Python script that monitors the game keeps its
++            # full env (PYTHONPATH, XDG_DATA_DIRS for Lutris assets, etc.);
++            # only the Wine/Proton subprocess gets the scrubbed env.
++            # EA App's eax::foundation::serializeEnvironmentImpl caps the
++            # env block it can pass to a child game process at ~32 KiB; on
++            # NixOS the GNOME/KDE session env baseline is ~17 KiB and once
++            # umu-launcher injects pressure-vessel + Steam Runtime
++            # LD_LIBRARY_PATH/STEAM_COMPAT_*/WINEDLLOVERRIDES, the env
++            # crosses 40 KiB and EA logs "Cannot serialize environment:
++            # too long, NNNNN" + InvalidEnvironmentData on every game
++            # launch. Same drop list as our Faugus runner.py env scrub
++            # (GST_PLUGIN_*, XDG_*_HOME, XDG_SESSION_TYPE deliberately
++            # kept for winegstreamer / Wine shader cache / Wayland detect).
++            _glf_drop_vars = [
++                # GNOME / GTK / Nix
++                "GI_TYPELIB_PATH", "GTK_PATH", "GIO_EXTRA_MODULES",
++                "GIO_MODULE_DIR", "GSETTINGS_SCHEMA_DIR",
++                "NIX_GSETTINGS_OVERRIDES_DIR", "GDM_X_SERVER_EXTRA_ARGS",
++                "NIX_PROFILES",
++                # KDE / Plasma
++                "KDEDIRS", "KDE_FULL_SESSION", "KDE_SESSION_VERSION",
++                "KDE_SESSION_UID", "KDE_APPLICATIONS_AS_SCOPE",
++                "KIO_LAUNCH_APP_PATH", "KACTIVITIES_ENVIRONMENT",
++                "KONSOLE_VERSION", "PLASMA_USE_QT_SCALING",
++                # XDG system-wide dirs (the giant ones via Nix paths;
++                # XDG_*_HOME kept). Desktop-identifier vars
++                # (XDG_CURRENT_DESKTOP, XDG_SESSION_DESKTOP,
++                # XDG_SESSION_CLASS, DESKTOP_SESSION) are deliberately
++                # KEPT below: short (< 100 bytes total) but Mutter /
++                # GNOME Shell / dash-to-dock use them to drive the dock
++                # auto-hide on Wine fullscreen windows. Without them
++                # the in-game window does not trigger the
++                # _NET_WM_STATE_FULLSCREEN handshake and the dock
++                # stays visible over the game.
++                "XDG_DATA_DIRS", "XDG_CONFIG_DIRS",
++                # Qt theming (no-op for Wine, overridden inside SLR)
++                "QT_PLUGIN_PATH", "QML2_IMPORT_PATH",
++                "QTWEBKIT_PLUGIN_PATH", "QT_AUTO_SCREEN_SCALE_FACTOR",
++                "QT_SCREEN_SCALE_FACTORS", "QT_QPA_PLATFORMTHEME",
++                "QT_STYLE_OVERRIDE", "QT_WAYLAND_DISABLE_WINDOWDECORATION",
++                "QT_IM_MODULE",
++                # Cursors / docs / Linux-only paths
++                "XCURSOR_PATH", "INFOPATH", "MANPATH", "TERMINFO_DIRS",
++                "LIBEXEC_PATH",
++                # Linux interpreters
++                "PERLLIB", "PERL5LIB", "PYTHONPATH",
++            ]
++            _glf_env_args = ["env"]
++            for _v in _glf_drop_vars:
++                _glf_env_args += ["-u", _v]
++            command = _glf_env_args + command
++
+         return command
+ 
+     def is_installed(self, flatpak_allowed: bool = True, version: str = None, fallback: bool = True) -> bool:
+@@ -1381,7 +1430,15 @@
+ 
+             uuid_pids = set(pid for pid in candidate_pids if Process(pid).environ.get("LUTRIS_GAME_UUID") == game_uuid)
+ 
+-            return (folder_pids & uuid_pids) | gamescope_pids
++            # GLF-OS: union instead of intersection. EA App spawns its
++            # children with CreateProcess(inheritEnv=false), which strips
++            # LUTRIS_GAME_UUID from the wine64 host processes hosting
++            # EADesktop.exe and any game EA App launches. Without this
++            # change, the intersection becomes empty as soon as the
++            # originally-spawned EALauncher.exe exits (~30ms after start),
++            # and Lutris kills the entire prefix before EA App even
++            # finishes starting up.
++            return (folder_pids | uuid_pids) | gamescope_pids
+         else:
+             return super().filter_game_pids(candidate_pids, game_uuid, game_folder)
+ 
+--- a/lutris/util/wine/proton.py
++++ b/lutris/util/wine/proton.py
+@@ -142,6 +142,23 @@
+     """Iterate through all potential Proton locations"""
+     yield settings.WINE_DIR
+ 
++    # GLF-OS: also surface Proton installations that live in the user's
++    # Steam compatibility-tools directory. Vanilla Lutris only scans
++    # settings.WINE_DIR and Steam library `common/` subdirs, so any
++    # Proton dropped in by `programs.steam.extraCompatPackages`, our
++    # systemd-user `glf-proton-{ge,cachyos}-link` services, or downloaded
++    # via Faugus / Heroic / ProtonUp-Qt is invisible to Lutris. As a
++    # consequence Lutris falls back to plain wine-ge for games whose
++    # yml requests UMU-Proton / GE-Proton / Proton-CachyOS, the prefix
++    # was created by umu-run and immediately misbehaves under bare wine,
++    # and the EA App / NFS Most Wanted launches die within seconds.
++    home = os.path.expanduser("~")
++    for compat_dir in (
++        os.path.join(home, ".local/share/Steam/compatibilitytools.d"),
++        os.path.join(home, ".steam/root/compatibilitytools.d"),
++    ):
++        yield compat_dir
++
+     try:
+         steamapp_dirs = get_steamapps_dirs()
+     except:
+--- a/lutris/game.py
++++ b/lutris/game.py
+@@ -926,12 +926,27 @@
+             self.on_game_quit()
+             return False
+ 
+-        # If game thread stopped but orphan processes remain (e.g. gamescope), clean them up
++        # If game thread stopped but other game-tracked processes remain,
++        # keep watching them instead of killing them.
++        # GLF-OS: launcher patterns (EA App, Origin, Battle.net, Ubisoft
++        # Connect) work by spawning a tiny launcher exe (EALauncher.exe,
++        # ~30 ms lifetime) that hands off to the real long-running app
++        # (EADesktop.exe). Vanilla Lutris treats the still-alive
++        # EADesktop / EABackgroundService / game wine64 processes as
++        # "orphans to clean up", calls force_stop_game (== wineserver -k),
++        # and wipes the entire prefix within seconds of the user clicking
++        # Play. With this branch turned into a no-op, beat() keeps polling
++        # until game_pids actually reaches zero, at which point the first
++        # condition above (`not game_thread.is_running and not game_pids`)
++        # legitimately fires on_game_quit. Real crashes still surface --
++        # they leave no game_pids -- and the user can always Stop the
++        # game manually if they want to force-kill an orphan.
++        # Original behaviour was:
++        #   self.runner.force_stop_game(game_pids)
++        #   self.on_game_quit()
+         if not self.game_thread.is_running and game_pids:
+-            logger.debug("Game thread stopped but %d orphan processes remain, cleaning up", len(game_pids))
+-            self.runner.force_stop_game(game_pids)
+-            self.on_game_quit()
+-            return False
++            logger.debug("Game thread stopped but %d processes remain, keeping watch", len(game_pids))
++            return True
+ 
+         return True
+ 

@@ -1,0 +1,65 @@
+name: "Update packages ❄️"
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # tous les jours à 8h UTC
+  workflow_dispatch:       # déclenchable manuellement depuis l'UI GitHub
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v30
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Install nix-update
+        run: nix profile install nixpkgs#nix-update
+
+      # lutris-unwrapped.nix contient le vrai `version`, donc on cible
+      # ce fichier directement. nix-update va lire le fetchFromGitHub,
+      # récupérer la dernière release de lutris/lutris sur GitHub,
+      # mettre à jour version + hash, et committer.
+      - name: Update lutris-custom
+        run: |
+          nix-update lutris-custom \
+            --flake \
+            --version=latest \
+            --override-filename pkgs/lutris/unwrapped.nix \
+            --commit
+        continue-on-error: true
+
+      # faugus: rev = version directement, nix-update trouve tout seul.
+      - name: Update faugus
+        run: |
+          nix-update faugus \
+            --flake \
+            --version=latest \
+            --commit
+        continue-on-error: true
+
+      # Crée une PR seulement s'il y a eu des commits (i.e. des updates)
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "auto-update: bump packages"
+          title: "⬆️ Auto-update: lutris & faugus"
+          body: |
+            Mise à jour automatique générée par le workflow `update-pkgs`.
+
+            Vérifier que les patches s'appliquent toujours proprement
+            avant de merger (notamment si le patch `ea-fix-fallback`
+            ou `runner-protonfixes` touche des zones modifiées upstream).
+          branch: auto-update/pkgs
+          delete-branch: true
+          # Ne crée pas de PR si rien n'a changé
+          base: main

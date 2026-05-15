@@ -1,0 +1,151 @@
+Keep protonfixes on for launcher GAMEIDs + pre-launch EA reconcile + env scrub
+
+Three GLF-OS behaviors bundled in this patch:
+
+1. Keep umu-protonfixes enabled for the well-known launcher GAMEIDs
+   Faugus installs (ea-app, battle-net, epic-games-launcher,
+   ubisoft-connect, rockstar-games-launcher, wargaming). Faugus
+   disables protonfixes for any GAMEID that is not "umu*" and not
+   numeric -- this wipes out the global-stage fixes that launchers
+   like EA App depend on.
+
+2. Reconcile the EA App version layout before each launch by calling
+   faugus.ea_fix.update_ea_path(). The reconcile was previously only
+   run from monitor_process at install time; but EA App auto-updates
+   itself between launches, so the rename/sweep/symlink pass has to
+   run on every relaunch for ea-app GAMEIDs.
+
+3. Scrub Linux/desktop-only env vars before spawning umu-run for
+   launcher GAMEIDs whose internal env serializer caps at ~32 KB.
+   On NixOS the desktop session env baseline is ~17 KB; combined
+   with what umu-launcher and pressure-vessel inject (LD_LIBRARY_PATH,
+   STEAM_COMPAT_*, WINEDLLOVERRIDES) we cross 32 KB and EA App fails
+   game launches with eax::foundation::serializeEnvironmentImpl
+   "Cannot serialize environment: the result is too long, NNNNN"
+   and the InvalidEnvironmentData telemetry event. We drop only
+   Linux-only chrome (GObject Introspection, GTK, KDE, system-wide
+   XDG dirs, Qt theming, Nix profiles, doc paths) and keep all vars
+   Wine/Proton/winegstreamer might use.
+
+--- a/faugus/runner.py
++++ b/faugus/runner.py
+@@ -161,7 +161,20 @@
+                     set_env("PROTONPATH", f"{self.default_runner}")
+ 
+         if os.environ.get("GAMEID") != "winetricks-gui":
+-            if "umu" not in os.environ.get("GAMEID", "") and not (os.environ.get("GAMEID", "").isnumeric()):
++            # GLF-OS: keep protonfixes enabled for the well-known launcher
++            # GAMEIDs that Faugus itself can install (ea-app, battle-net,
++            # epic-games, ubisoft-connect, rockstar-games-launcher,
++            # wargaming). Without this, EA App's EABackgroundService loops
++            # in auto-repair because the global-stage protonfixes (corefonts
++            # registry, dotnet stubs, ...) are never applied.
++            _glf_launcher_gameids = {
++                "ea-app", "battle-net", "epic-games-launcher",
++                "ubisoft-connect", "rockstar-games-launcher", "wargaming",
++            }
++            _glf_gameid = os.environ.get("GAMEID", "")
++            if (_glf_gameid not in _glf_launcher_gameids
++                    and "umu" not in _glf_gameid
++                    and not _glf_gameid.isnumeric()):
+                 set_env("PROTONFIXES_DISABLE", "1")
+ 
+         protonpath = os.environ.get("PROTONPATH")
+@@ -214,6 +227,21 @@
+ 
+         set_env("UMU_USE_STEAM", "1")
+ 
++        # GLF-OS: reconcile EA App version layout before each launch.
++        # EA App auto-updates between launches; the reconcile (rename
++        # staging dirs, sweep orphan archives, symlink stale registry
++        # version refs to the current dir) keeps the on-disk layout in
++        # sync with what EA Desktop expects to find at the paths Wines
++        # registry hardcodes. Without it EABackgroundService loads from
++        # the previous version dir and EA falls into the auto-repair
++        # loop.
++        if os.environ.get("GAMEID") == "ea-app":
++            try:
++                from faugus.ea_fix import update_ea_path
++                update_ea_path(os.environ.get("WINEPREFIX", ""))
++            except Exception as e:
++                print(f"GLF-OS: pre-launch EA reconcile failed: {e}")
++
+         self.lock_prefix()
+         self.execute_final_command()
+ 
+@@ -239,9 +267,74 @@
+         import gc
+ 
+         def start_and_watch(cmd, is_game=False):
++            # GLF-OS: scrub Linux/desktop-only env vars for launcher GAMEIDs
++            # whose internal env serializer caps at ~32 KB. EA App's
++            # eax::foundation::serializeEnvironmentImpl fails with "Cannot
++            # serialize environment: the result is too long, NNNNN" when the
++            # combined Faugus + pressure-vessel env exceeds the cap. On NixOS
++            # the desktop session env baseline is ~17 KB (GNOME GI_TYPELIB_PATH
++            # alone is 5.1 KB, XDG_DATA_DIRS 3.3 KB) before umu-launcher's
++            # SLR injects LD_LIBRARY_PATH/STEAM_COMPAT_*/WINEDLLOVERRIDES on
++            # top. We drop the Linux-only chrome (GObject, GTK, KDE Plasma,
++            # XDG dirs, Qt theming, Nix profiles, doc paths) for the
++            # well-known launcher GAMEIDs; saves ~15 KB and keeps the final
++            # env safely under the 32 KB cap. We deliberately KEEP
++            # GST_PLUGIN_* (winegstreamer uses host GStreamer for video
++            # decoding), XDG_*_HOME (Wine uses XDG_DATA_HOME for shader
++            # caches), XDG_SESSION_TYPE (Wine/DXVK X11 vs Wayland path)
++            # and the desktop-identifier vars XDG_CURRENT_DESKTOP /
++            # XDG_SESSION_DESKTOP / XDG_SESSION_CLASS / DESKTOP_SESSION
++            # so Mutter / GNOME Shell / dash-to-dock correctly emit the
++            # _NET_WM_STATE_FULLSCREEN handshake for the Wine window
++            # and trigger the dock auto-hide -- without them the game
++            # window is treated as a non-DE-aware client and the dock
++            # stays on top, breaking the immersive fullscreen UX.
++            _glf_env = os.environ
++            _glf_serializer_capped = {
++                "ea-app", "origin", "battle-net", "ubisoft-connect",
++                "epic-games-launcher", "rockstar-games-launcher", "wargaming",
++            }
++            if os.environ.get("GAMEID", "") in _glf_serializer_capped:
++                _glf_drop = {
++                    # GNOME / GTK / Nix
++                    "GI_TYPELIB_PATH", "GTK_PATH", "GIO_EXTRA_MODULES",
++                    "GIO_MODULE_DIR", "GSETTINGS_SCHEMA_DIR",
++                    "NIX_GSETTINGS_OVERRIDES_DIR", "GDM_X_SERVER_EXTRA_ARGS",
++                    "NIX_PROFILES",
++                    # KDE / Plasma
++                    "KDEDIRS", "KDE_FULL_SESSION", "KDE_SESSION_VERSION",
++                    "KDE_SESSION_UID", "KDE_APPLICATIONS_AS_SCOPE",
++                    "KIO_LAUNCH_APP_PATH", "KACTIVITIES_ENVIRONMENT",
++                    "KONSOLE_VERSION", "PLASMA_USE_QT_SCALING",
++                    # XDG system-wide dirs (the giant ones via Nix paths).
++                    # Desktop-identifier vars (XDG_CURRENT_DESKTOP,
++                    # XDG_SESSION_DESKTOP, XDG_SESSION_CLASS,
++                    # DESKTOP_SESSION) are deliberately KEPT below: they
++                    # are short (< 100 bytes total) but Mutter / GNOME
++                    # Shell / dash-to-dock use them to decide whether a
++                    # fullscreen window should hide the dock. Without
++                    # them the in-game window does not trigger the
++                    # auto-hide and the dock stays visible over the
++                    # game.
++                    "XDG_DATA_DIRS", "XDG_CONFIG_DIRS",
++                    # Qt theming (no-op for Wine, overridden inside SLR)
++                    "QT_PLUGIN_PATH", "QML2_IMPORT_PATH",
++                    "QTWEBKIT_PLUGIN_PATH", "QT_AUTO_SCREEN_SCALE_FACTOR",
++                    "QT_SCREEN_SCALE_FACTORS", "QT_QPA_PLATFORMTHEME",
++                    "QT_STYLE_OVERRIDE", "QT_WAYLAND_DISABLE_WINDOWDECORATION",
++                    "QT_IM_MODULE",
++                    # Cursors / docs / Linux-only paths
++                    "XCURSOR_PATH", "INFOPATH", "MANPATH", "TERMINFO_DIRS",
++                    "LIBEXEC_PATH",
++                    # Linux interpreters
++                    "PERLLIB", "PERL5LIB", "PYTHONPATH",
++                }
++                _glf_env = {k: v for k, v in os.environ.items()
++                            if k not in _glf_drop}
++
+             process = subprocess.Popen(
+                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+-                bufsize=8192, text=True
++                bufsize=8192, text=True, env=_glf_env
+             )
+ 
+             def watch_stream(stream):
