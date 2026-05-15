@@ -11,6 +11,7 @@
         scxctl        = pkgs.callPackage ./pkgs/scxctl.nix {};
         lutris-custom = pkgs.callPackage ./pkgs/lutris/default.nix {};
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
+        openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
       };
     };
 }
