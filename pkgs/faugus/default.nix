@@ -59,7 +59,7 @@ in
 
 python3Packages.buildPythonApplication rec {
   pname = "faugus-launcher";
-  version = "1.18.3";
+  version = "latest";
 
   src = fetchFromGitHub {
     owner = "Faugus";

@@ -60,7 +60,7 @@ in
 
 python3Packages.buildPythonApplication rec {
   pname = "lutris-unwrapped";
-  version = "0.5.22";
+  version = "latest";
 
   src = fetchFromGitHub {
     owner = "lutris";
