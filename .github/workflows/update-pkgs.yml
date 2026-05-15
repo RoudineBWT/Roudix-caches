@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
@@ -55,20 +54,7 @@ jobs:
             --commit
         continue-on-error: true
 
-      # Crée une PR seulement s'il y a eu des commits (i.e. des updates)
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "auto-update: bump packages"
-          title: "⬆️ Auto-update: lutris & faugus"
-          body: |
-            Mise à jour automatique générée par le workflow `update-pkgs`.
-
-            Vérifier que les patches s'appliquent toujours proprement
-            avant de merger (notamment si le patch `ea-fix-fallback`
-            ou `runner-protonfixes` touche des zones modifiées upstream).
-          branch: auto-update/pkgs
-          delete-branch: true
-          # Ne crée pas de PR si rien n'a changé
-          base: main
+      # Push direct sur main si nix-update a fait des commits.
+      # Si rien n'a changé (déjà à jour), git push ne fait rien.
+      - name: Push updates
+        run: git push origin main
