@@ -65,7 +65,7 @@ python3Packages.buildPythonApplication rec {
     owner = "Faugus";
     repo = "faugus-launcher";
     rev = version;
-    hash = "sha256-lRfgHGv4nFs6z1kFY84M4BdDa0qlD/c+LFcKxkdaeHk=";
+    hash = "sha256-cqtylAeDQDlv+Ai9ALr4cOxrOolDdHrN5yYRFW2/H8s=";
   };
 
   pyproject = false;
@@ -109,7 +109,6 @@ python3Packages.buildPythonApplication rec {
   #                           launcher (ea-app, battle-net…) — sans ça,
   #                           EABackgroundService.exe boucle en auto-repair.
   patches = [
-    ./ea-fix-fallback.patch
     ./runner-protonfixes.patch
   ];
 
