@@ -21,6 +21,12 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
+      # Nécessaire pour que nix-update puisse faire git commit
+      - name: Configure git identity
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
       - name: Install nix-update
         run: nix profile install nixpkgs#nix-update
 
@@ -37,12 +43,15 @@ jobs:
             --commit
         continue-on-error: true
 
-      # faugus: rev = version directement, nix-update trouve tout seul.
+      # faugus: les releases sont taguées sans préfixe `v` (ex: 1.19.3).
+      # On passe --url pour pointer nix-update vers le bon repo GitHub
+      # et --version=stable pour qu'il prenne le dernier tag de release.
       - name: Update faugus
         run: |
           nix-update faugus \
             --flake \
-            --version=latest \
+            --version=stable \
+            --url https://github.com/Faugus/faugus-launcher \
             --commit
         continue-on-error: true
 
