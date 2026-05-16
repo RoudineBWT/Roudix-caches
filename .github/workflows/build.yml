@@ -130,7 +130,7 @@ jobs:
             "https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/${TAG}/pnpm-lock.yaml"
 
           # prefetch-pnpm-deps prend le chemin du lockfile en argument
-          FULL_OUTPUT=$(nix run nixpkgs#prefetch-pnpm-deps -- "$TMPDIR_LOCK/pnpm-lock.yaml" 2>&1)
+          FULL_OUTPUT=$(nix run "github:NixOS/nixpkgs/nixpkgs-unstable#prefetch-pnpm-deps" -- "$TMPDIR_LOCK/pnpm-lock.yaml" 2>&1)
           HASH=$(echo "$FULL_OUTPUT" | grep '^sha256-' | tail -1)
 
           if [[ "$HASH" != sha256-* ]]; then
@@ -158,11 +158,11 @@ jobs:
       - name: Patch default.nix
         if: steps.changes.outputs.any == 'true'
         env:
-          HEROIC_NEW:     ${{ steps.upstream.outputs.heroic }}
-          ELEC_MAJOR:     ${{ steps.upstream.outputs.electron }}
-          SRC_HASH:       ${{ steps.hash_heroic_src.outputs.hash }}
-          PNPM_HASH:      ${{ steps.hash_pnpm.outputs.hash }}
-          ELEC_CHANGED:   ${{ steps.changes.outputs.electron }}
+          HEROIC_NEW: ${{ steps.upstream.outputs.heroic }}
+          ELEC_MAJOR: ${{ steps.upstream.outputs.electron }}
+          SRC_HASH: ${{ steps.hash_heroic_src.outputs.hash }}
+          PNPM_HASH: ${{ steps.hash_pnpm.outputs.hash }}
+          ELEC_CHANGED: ${{ steps.changes.outputs.electron }}
           HEROIC_CHANGED: ${{ steps.changes.outputs.heroic }}
         run: |
           NIX="pkgs/heroic/default.nix"
@@ -198,7 +198,7 @@ jobs:
       - name: Patch legendary.nix
         if: steps.changes.outputs.legendary == 'true'
         env:
-          LEG_NEW:  ${{ steps.upstream.outputs.legendary }}
+          LEG_NEW: ${{ steps.upstream.outputs.legendary }}
           LEG_HASH: ${{ steps.hash_legendary.outputs.hash }}
         run: |
           LEG="pkgs/heroic/legendary.nix"
