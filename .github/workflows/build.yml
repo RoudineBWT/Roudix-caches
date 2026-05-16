@@ -34,16 +34,13 @@ jobs:
 
           HEROIC_CUR=$(grep -oP 'version\s*=\s*"\K[^"]+' "$NIX" | head -1)
           LEG_CUR=$(grep    -oP 'version\s*=\s*"\K[^"]+' "$LEG" | head -1)
-          ELEC_MAJOR_CUR=$(grep -oP 'electron_\K\d+' "$NIX" | head -1)
 
-          echo "heroic=$HEROIC_CUR"       >> "$GITHUB_OUTPUT"
-          echo "legendary=$LEG_CUR"       >> "$GITHUB_OUTPUT"
-          echo "electron=$ELEC_MAJOR_CUR" >> "$GITHUB_OUTPUT"
+          echo "heroic=$HEROIC_CUR"  >> "$GITHUB_OUTPUT"
+          echo "legendary=$LEG_CUR" >> "$GITHUB_OUTPUT"
 
           echo "=== Versions actuelles ==="
           echo "heroic:    $HEROIC_CUR"
           echo "legendary: $LEG_CUR"
-          echo "electron:  $ELEC_MAJOR_CUR"
 
       # ── 2. Versions upstream ──────────────────────────────────────────────
       - name: Fetch upstream versions
@@ -61,21 +58,13 @@ jobs:
             --json tagName -q .tagName)
           LEG_NEW="${LEG_TAG#v}"
 
-          # Electron major depuis le package.json du tag
-          PKG=$(curl -fsSL \
-            "https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/${HEROIC_TAG}/package.json")
-          ELEC_RAW=$(echo "$PKG" | jq -r '.devDependencies.electron')
-          ELEC_MAJOR=$(echo "$ELEC_RAW" | grep -oP '\d+' | head -1)
-
           echo "heroic=$HEROIC_NEW"      >> "$GITHUB_OUTPUT"
           echo "heroic_tag=$HEROIC_TAG"  >> "$GITHUB_OUTPUT"
           echo "legendary=$LEG_NEW"      >> "$GITHUB_OUTPUT"
-          echo "electron=$ELEC_MAJOR"    >> "$GITHUB_OUTPUT"
 
           echo "=== Versions upstream ==="
           echo "heroic:    $HEROIC_NEW"
           echo "legendary: $LEG_NEW"
-          echo "electron:  $ELEC_MAJOR"
 
       # ── 3. Détecter ce qui a changé ───────────────────────────────────────
       - name: Detect changes
@@ -83,25 +72,20 @@ jobs:
         run: |
           HEROIC_CHANGED=false
           LEG_CHANGED=false
-          ELEC_CHANGED=false
           ANY=false
 
           [ "${{ steps.upstream.outputs.heroic }}"    != "${{ steps.current.outputs.heroic }}"   ] \
             && HEROIC_CHANGED=true && ANY=true
           [ "${{ steps.upstream.outputs.legendary }}" != "${{ steps.current.outputs.legendary }}" ] \
             && LEG_CHANGED=true   && ANY=true
-          [ "${{ steps.upstream.outputs.electron }}"  != "${{ steps.current.outputs.electron }}"  ] \
-            && ELEC_CHANGED=true  && ANY=true
 
           echo "heroic=$HEROIC_CHANGED"   >> "$GITHUB_OUTPUT"
           echo "legendary=$LEG_CHANGED"   >> "$GITHUB_OUTPUT"
-          echo "electron=$ELEC_CHANGED"   >> "$GITHUB_OUTPUT"
           echo "any=$ANY"                 >> "$GITHUB_OUTPUT"
 
           echo "=== Changements détectés ==="
           echo "heroic:    $HEROIC_CHANGED"
           echo "legendary: $LEG_CHANGED"
-          echo "electron:  $ELEC_CHANGED"
 
       # ── 4a. Hash source Heroic ────────────────────────────────────────────
       - name: Compute heroic src hash
@@ -116,29 +100,50 @@ jobs:
           echo "heroic src hash: $HASH"
 
       # ── 4b. Hash pnpmDeps ─────────────────────────────────────────────────
-      # Recalculé si heroic ou electron changent (le lockfile ou les deps changent)
+      # Méthode fake hash : patch temporaire de default.nix avec hash=""
+      # puis nix build pour que Nix calcule et affiche le vrai hash.
       - name: Compute pnpm deps hash
-        if: >-
-          steps.changes.outputs.heroic == 'true' ||
-          steps.changes.outputs.electron == 'true'
+        if: steps.changes.outputs.heroic == 'true'
         id: hash_pnpm
+        env:
+          HEROIC_NEW: ${{ steps.upstream.outputs.heroic }}
+          SRC_HASH: ${{ steps.hash_heroic_src.outputs.hash }}
         run: |
-          TAG="${{ steps.upstream.outputs.heroic_tag }}"
+          python3 - <<'EOF'
+          import re, os
 
-          TMPDIR_LOCK=$(mktemp -d)
-          curl -fsSLo "$TMPDIR_LOCK/pnpm-lock.yaml" \
-            "https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/${TAG}/pnpm-lock.yaml"
+          content = open("pkgs/heroic/default.nix").read()
 
-          # prefetch-pnpm-deps prend le chemin du lockfile en argument
-          FULL_OUTPUT=$(nix run "github:NixOS/nixpkgs/nixpkgs-unstable#prefetch-pnpm-deps" -- "$TMPDIR_LOCK/pnpm-lock.yaml" 2>&1) || true
-          echo "=== OUTPUT ==="
-          echo "$FULL_OUTPUT"
-          echo "=== FIN ==="
-          HASH=$(echo "$FULL_OUTPUT" | grep '^sha256-' | tail -1)
+          heroic_new = os.environ["HEROIC_NEW"]
+          src_hash   = os.environ["SRC_HASH"]
+
+          # version
+          content = re.sub(r'(version\s*=\s*")[^"]*(")', rf'\g<1>{heroic_new}\2', content, count=1)
+          # 1ère occurrence de hash = src
+          content = re.sub(r'(hash\s*=\s*")[^"]*(")', rf'\g<1>{src_hash}\2', content, count=1)
+          # 2ème occurrence de hash = pnpmDeps → vide pour déclencher l'erreur nix
+          count = [0]
+          def empty_second(m):
+              count[0] += 1
+              return m.group(1) + m.group(2) if count[0] == 2 else m.group(0)
+          content = re.sub(r'(hash\s*=\s*")[^"]*(")', empty_second, content)
+
+          open("pkgs/heroic/default.nix", "w").write(content)
+          EOF
+
+          echo "=== default.nix patché pour probe ==="
+          git diff pkgs/heroic/default.nix
+
+          NIX_OUTPUT=$(nix build .#heroic-custom 2>&1) || true
+          echo "$NIX_OUTPUT"
+
+          HASH=$(echo "$NIX_OUTPUT" | grep 'got:' | awk '{print $2}' | head -1)
+
+          git checkout pkgs/heroic/default.nix
 
           if [[ "$HASH" != sha256-* ]]; then
-            echo "ERREUR: hash pnpm invalide. Sortie complète:"
-            echo "$FULL_OUTPUT"
+            echo "ERREUR: hash pnpm invalide. Sortie nix build:"
+            echo "$NIX_OUTPUT"
             exit 1
           fi
 
@@ -159,43 +164,37 @@ jobs:
 
       # ── 5a. Patcher default.nix ───────────────────────────────────────────
       - name: Patch default.nix
-        if: steps.changes.outputs.any == 'true'
+        if: steps.changes.outputs.heroic == 'true'
         env:
           HEROIC_NEW: ${{ steps.upstream.outputs.heroic }}
-          ELEC_MAJOR: ${{ steps.upstream.outputs.electron }}
           SRC_HASH: ${{ steps.hash_heroic_src.outputs.hash }}
           PNPM_HASH: ${{ steps.hash_pnpm.outputs.hash }}
-          ELEC_CHANGED: ${{ steps.changes.outputs.electron }}
-          HEROIC_CHANGED: ${{ steps.changes.outputs.heroic }}
         run: |
-          NIX="pkgs/heroic/default.nix"
+          python3 - <<'EOF'
+          import re, os
 
-          # ── version heroic + hash src (1ère occurrence de hash) ──────────
-          if [ "$HEROIC_CHANGED" = "true" ]; then
-            sed -i "s|version = \"[^\"]*\"|version = \"${HEROIC_NEW}\"|" "$NIX"
-            sed -i "0,/hash = \"sha256-[^\"]*\"/ s|hash = \"sha256-[^\"]*\"|hash = \"${SRC_HASH}\"|" "$NIX"
-          fi
+          content = open("pkgs/heroic/default.nix").read()
 
-          # ── pnpmDeps hash (2ème occurrence de hash) ───────────────────────
-          if [ -n "$PNPM_HASH" ]; then
-            awk -v new="$PNPM_HASH" '
-              /hash = "sha256-/ { count++
-                if (count == 2) {
-                  sub(/hash = "sha256-[^"]*"/, "hash = \"" new "\"")
-                }
-              }
-              { print }
-            ' "$NIX" > /tmp/default.nix.tmp && mv /tmp/default.nix.tmp "$NIX"
-          fi
+          heroic_new = os.environ["HEROIC_NEW"]
+          src_hash   = os.environ["SRC_HASH"]
+          pnpm_hash  = os.environ["PNPM_HASH"]
 
-          # ── electron_NN ──────────────────────────────────────────────────
-          if [ "$ELEC_CHANGED" = "true" ] && [ -n "$ELEC_MAJOR" ]; then
-            CUR_ELEC=$(grep -oP 'electron_\K\d+' "$NIX" | head -1)
-            sed -i "s|electron_${CUR_ELEC}|electron_${ELEC_MAJOR}|g" "$NIX"
-          fi
+          # version
+          content = re.sub(r'(version\s*=\s*")[^"]*(")', rf'\g<1>{heroic_new}\2', content, count=1)
+          # 1ère occurrence de hash = src
+          content = re.sub(r'(hash\s*=\s*")[^"]*(")', rf'\g<1>{src_hash}\2', content, count=1)
+          # 2ème occurrence de hash = pnpmDeps
+          count = [0]
+          def replace_pnpm(m):
+              count[0] += 1
+              return m.group(1) + pnpm_hash + m.group(2) if count[0] == 2 else m.group(0)
+          content = re.sub(r'(hash\s*=\s*")[^"]*(")', replace_pnpm, content)
+
+          open("pkgs/heroic/default.nix", "w").write(content)
+          EOF
 
           echo "=== default.nix après patch ==="
-          git diff "$NIX"
+          git diff pkgs/heroic/default.nix
 
       # ── 5b. Patcher legendary.nix ─────────────────────────────────────────
       - name: Patch legendary.nix
@@ -230,8 +229,6 @@ jobs:
             BODY+="| **heroic** | \`${{ steps.current.outputs.heroic }}\` | \`${{ steps.upstream.outputs.heroic }}\` |"$'\n'
           [ "${{ steps.changes.outputs.legendary }}" = "true" ] && \
             BODY+="| **legendary** | \`${{ steps.current.outputs.legendary }}\` | \`${{ steps.upstream.outputs.legendary }}\` |"$'\n'
-          [ "${{ steps.changes.outputs.electron }}"  = "true" ] && \
-            BODY+="| **electron** | \`${{ steps.current.outputs.electron }}\` | \`${{ steps.upstream.outputs.electron }}\` |"$'\n'
 
           BODY+=$'\n'"Release: https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases/tag/${{ steps.upstream.outputs.heroic_tag }}"
 
@@ -251,7 +248,6 @@ jobs:
             heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}
 
             legendary: ${{ steps.current.outputs.legendary }} → ${{ steps.upstream.outputs.legendary }}
-            electron:  ${{ steps.current.outputs.electron }} → ${{ steps.upstream.outputs.electron }}
           title: "heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}"
           body: ${{ steps.pr_body.outputs.body }}
           labels: "automated,update"
