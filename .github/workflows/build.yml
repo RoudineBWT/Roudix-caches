@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
@@ -100,8 +99,6 @@ jobs:
           echo "heroic src hash: $HASH"
 
       # ── 4b. Hash pnpmDeps ─────────────────────────────────────────────────
-      # Méthode fake hash : patch temporaire de default.nix avec hash=""
-      # puis nix build pour que Nix calcule et affiche le vrai hash.
       - name: Compute pnpm deps hash
         if: steps.changes.outputs.heroic == 'true'
         id: hash_pnpm
@@ -216,38 +213,18 @@ jobs:
         run: |
           nix build .#heroic-custom --print-build-logs
 
-      # ── 7. Pull Request ───────────────────────────────────────────────────
-      - name: Build PR description
+      # ── 7. Commit + push direct sur main ──────────────────────────────────
+      - name: Commit and push
         if: steps.changes.outputs.any == 'true'
-        id: pr_body
         run: |
-          BODY="## Mise à jour automatique"$'\n\n'
-          BODY+="| Package | Avant | Après |"$'\n'
-          BODY+="|---|---|---|"$'\n'
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          [ "${{ steps.changes.outputs.heroic }}"    = "true" ] && \
-            BODY+="| **heroic** | \`${{ steps.current.outputs.heroic }}\` | \`${{ steps.upstream.outputs.heroic }}\` |"$'\n'
+          git add pkgs/heroic/default.nix pkgs/heroic/legendary.nix
+
+          MSG="heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}"
           [ "${{ steps.changes.outputs.legendary }}" = "true" ] && \
-            BODY+="| **legendary** | \`${{ steps.current.outputs.legendary }}\` | \`${{ steps.upstream.outputs.legendary }}\` |"$'\n'
+            MSG+=$'\n\n'"legendary: ${{ steps.current.outputs.legendary }} → ${{ steps.upstream.outputs.legendary }}"
 
-          BODY+=$'\n'"Release: https://github.com/Heroic-Games-Launcher/HeroicGamesLauncher/releases/tag/${{ steps.upstream.outputs.heroic_tag }}"
-
-          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
-          echo "body<<$EOF" >> "$GITHUB_OUTPUT"
-          echo "$BODY"      >> "$GITHUB_OUTPUT"
-          echo "$EOF"       >> "$GITHUB_OUTPUT"
-
-      - name: Create Pull Request
-        if: steps.changes.outputs.any == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          branch: "update/heroic-${{ steps.upstream.outputs.heroic }}"
-          delete-branch: true
-          commit-message: |
-            heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}
-
-            legendary: ${{ steps.current.outputs.legendary }} → ${{ steps.upstream.outputs.legendary }}
-          title: "heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}"
-          body: ${{ steps.pr_body.outputs.body }}
-          labels: "automated,update"
+          git commit -m "$MSG"
+          git push origin HEAD:main
