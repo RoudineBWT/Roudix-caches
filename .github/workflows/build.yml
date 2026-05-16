@@ -130,7 +130,7 @@ jobs:
             "https://raw.githubusercontent.com/Heroic-Games-Launcher/HeroicGamesLauncher/${TAG}/pnpm-lock.yaml"
 
           # prefetch-pnpm-deps prend le chemin du lockfile en argument
-          FULL_OUTPUT=$(nix run "github:NixOS/nixpkgs/nixpkgs-unstable#prefetch-pnpm-deps" -- "$TMPDIR_LOCK/pnpm-lock.yaml" 2>&1)
+          FULL_OUTPUT=$(nix run "github:NixOS/nixpkgs/nixpkgs-unstable#prefetch-pnpm-deps" -- "$TMPDIR_LOCK/pnpm-lock.yaml" 2>&1) || true
           echo "=== OUTPUT ==="
           echo "$FULL_OUTPUT"
           echo "=== FIN ==="
