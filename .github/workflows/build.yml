@@ -131,6 +131,9 @@ jobs:
 
           # prefetch-pnpm-deps prend le chemin du lockfile en argument
           FULL_OUTPUT=$(nix run "github:NixOS/nixpkgs/nixpkgs-unstable#prefetch-pnpm-deps" -- "$TMPDIR_LOCK/pnpm-lock.yaml" 2>&1)
+          echo "=== OUTPUT ==="
+          echo "$FULL_OUTPUT"
+          echo "=== FIN ==="
           HASH=$(echo "$FULL_OUTPUT" | grep '^sha256-' | tail -1)
 
           if [[ "$HASH" != sha256-* ]]; then
