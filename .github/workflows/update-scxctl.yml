@@ -101,18 +101,23 @@ jobs:
           CARGO_HASH="${{ steps.cargo_hash.outputs.hash }}"
           sed -i "s|cargoHash\s*=\s*\"[^\"]*\"|cargoHash = \"${CARGO_HASH}\"|" pkgs/scxctl.nix
 
-      # ── 7. Build final + push Cachix ──────────────────────────────────
+      # ── 7. Mettre à jour le flake.lock (rustc, etc.) ─────────────────
+      - name: Update flake.lock
+        if: steps.check.outputs.needed == 'true'
+        run: nix flake update
+
+      # ── 8. Build final + push Cachix ──────────────────────────────────
       - name: Build and push to Cachix
         if: steps.check.outputs.needed == 'true'
         run: |
           nix build .#scxctl --print-out-paths | cachix push roudix
 
-      # ── 8. Commit ─────────────────────────────────────────────────────
+      # ── 9. Commit ─────────────────────────────────────────────────────
       - name: Commit updated scxctl.nix
         if: steps.check.outputs.needed == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pkgs/scxctl.nix
+          git add pkgs/scxctl.nix flake.lock
           git commit -m "chore: bump scxctl ${{ steps.current.outputs.version }} → ${{ steps.upstream.outputs.version }}"
           git push
