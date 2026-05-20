@@ -6,13 +6,12 @@
 
 rustPlatform.buildRustPackage rec {
   pname   = "scxctl";
-  version   = "1.1.1";  # mets à jour selon la dernière release de scx-loader
+  version   = "1.1.1";
 
   src = fetchFromGitHub {
     owner  = "sched-ext";
     repo   = "scx-loader";
     rev    = "v${version}";
-    # nix-prefetch-url --unpack https://github.com/sched-ext/scx-loader/archive/v0.2.0.tar.gz
     hash   = "sha256-5OvdtW/Li+ubHDBSKe2ssE9ZyNSCcxNFSJffzxQ9WMk=";
   };
 
