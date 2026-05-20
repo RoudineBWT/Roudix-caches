@@ -76,7 +76,7 @@ jobs:
         run: |
           VERSION="${{ steps.upstream.outputs.version }}"
           SRC_HASH="${{ steps.src_hash.outputs.hash }}"
-          sed -i "s/version\s*=\s*\"[^\"]*\"/version   = \"${VERSION}\"/" pkgs/scxctl.nix
+          sed -i "s|version\s*=\s*\"[^\"]*\"|version   = \"${VERSION}\"|" pkgs/scxctl.nix
           sed -i "0,/hash\s*=\s*\"[^\"]*\"/s||hash   = \"${SRC_HASH}\"|" pkgs/scxctl.nix
 
       # ── 6. Obtenir le cargo hash via build raté ───────────────────────
@@ -84,7 +84,7 @@ jobs:
         if: steps.check.outputs.needed == 'true'
         id: cargo_hash
         run: |
-          sed -i "s/cargoHash\s*=\s*\"[^\"]*\"/cargoHash = \"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"/" pkgs/scxctl.nix
+          sed -i 's|cargoHash\s*=\s*"[^"]*"|cargoHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="|' pkgs/scxctl.nix
           BUILD_OUT=$(nix build .#scxctl 2>&1 || true)
           CARGO_HASH=$(echo "$BUILD_OUT" | grep -oP 'got:\s*\K(sha256-[A-Za-z0-9+/=]+)' | head -1)
           if [ -z "$CARGO_HASH" ]; then
@@ -98,7 +98,8 @@ jobs:
       - name: Update cargoHash
         if: steps.check.outputs.needed == 'true'
         run: |
-          sed -i "s/cargoHash\s*=\s*\"[^\"]*\"/cargoHash = \"${{ steps.cargo_hash.outputs.hash }}\"/" pkgs/scxctl.nix
+          CARGO_HASH="${{ steps.cargo_hash.outputs.hash }}"
+          sed -i "s|cargoHash\s*=\s*\"[^\"]*\"|cargoHash = \"${CARGO_HASH}\"|" pkgs/scxctl.nix
 
       # ── 7. Build final + push Cachix ──────────────────────────────────
       - name: Build and push to Cachix
