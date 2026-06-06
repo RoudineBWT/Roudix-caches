@@ -102,14 +102,7 @@ python3Packages.buildPythonApplication rec {
     ${lsfgSubstitutions}
   '';
 
-  # Patches fonctionnels (non spécifiques à GLF-OS) :
-  #   - ea-fix-fallback     : robustesse détection path EA App lors des
-  #                           layouts rename <version>-<timestamp>.
-  #   - runner-protonfixes  : garde umu-protonfixes actif pour les GAMEIDs
-  #                           launcher (ea-app, battle-net…) — sans ça,
-  #                           EABackgroundService.exe boucle en auto-repair.
   patches = [
-    ./runner-protonfixes.patch
   ];
 
   installPhase = ''
