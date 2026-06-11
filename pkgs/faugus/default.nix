@@ -90,13 +90,7 @@ python3Packages.buildPythonApplication rec {
     substituteInPlace faugus-launcher \
       --replace-fail "/usr/bin/python3" "${python3Packages.python}/bin/python3"
 
-    substituteInPlace faugus/launcher.py \
-      --replace-fail "PathManager.user_data('faugus-launcher/umu-run')" "'${lib.getExe umu-launcher}'"
-
-    substituteInPlace faugus/runner.py \
-      --replace-fail "PathManager.user_data('faugus-launcher/umu-run')" "'${lib.getExe umu-launcher}'"
-
-    substituteInPlace faugus/shortcut.py \
+    substituteInPlace faugus/path_manager.py \
       --replace-fail "PathManager.user_data('faugus-launcher/umu-run')" "'${lib.getExe umu-launcher}'"
 
     ${lsfgSubstitutions}
