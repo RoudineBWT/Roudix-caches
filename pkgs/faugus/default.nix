@@ -34,25 +34,16 @@ let
 
   pythonPath = python3Packages.makePythonPath pythonDeps;
 
-  # Substitution lsfg-vk conditionnelle : si le package est fourni on
-  # patch les chemins en dur, sinon on laisse les paths upstream
-  # (l'utilisateur devra installer lsfg-vk par un autre moyen).
+  # Depuis 1.22.5, les paths lsfg-vk ont migré dans path_manager.py sous forme
+  # de listes candidates. On remplace les paths hardcodés par ceux du store Nix.
+  # Si lsfg-vk est null, on laisse les paths upstream (détection runtime).
   lsfgSubstitutions = lib.optionalString (lsfg-vk != null) ''
-    substituteInPlace faugus/launcher.py \
-      --replace-fail "/usr/lib/extensions/vulkan/lsfgvk/lib/liblsfg-vk.so"       "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib/liblsfg-vk.so"                                    "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib/extensions/vulkan/lsfgvk/lib/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
-      --replace-fail "/usr/lib/liblsfg-vk-layer.so"                              "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
-      --replace-fail "/usr/lib64/liblsfg-vk.so"                                  "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib64/liblsfg-vk-layer.so"                            "${lsfg-vk}/lib/liblsfg-vk-layer.so"
-
-    substituteInPlace faugus/shortcut.py \
-      --replace-fail "/usr/lib/extensions/vulkan/lsfgvk/lib/liblsfg-vk.so"       "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib/liblsfg-vk.so"                                    "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib/extensions/vulkan/lsfgvk/lib/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
-      --replace-fail "/usr/lib/liblsfg-vk-layer.so"                              "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
-      --replace-fail "/usr/lib64/liblsfg-vk.so"                                  "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib64/liblsfg-vk-layer.so"                            "${lsfg-vk}/lib/liblsfg-vk-layer.so"
+    substituteInPlace faugus/path_manager.py \
+      --replace-fail "/usr/lib/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
+      --replace-fail "/usr/lib64/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
+      --replace-fail "/usr/local/lib/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
+      --replace-fail "/usr/lib/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
+      --replace-fail "/usr/lib64/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so"
   '';
 
 in
