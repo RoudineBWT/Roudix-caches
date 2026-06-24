@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: update-pkgs
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +65,9 @@ jobs:
       # Push direct sur main si nix-update a fait des commits.
       # Si rien n'a changé (déjà à jour), git push ne fait rien.
       - name: Push updates
-        run: git push origin main
+        run: |
+          git pull --rebase origin main
+          git push origin main
 
       # Build tous les packages — cachix-action intercepte automatiquement
       # les sorties et les pousse vers cache.cachix.org/roudix
