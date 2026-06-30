@@ -50,13 +50,13 @@ in
 
 python3Packages.buildPythonApplication rec {
   pname = "faugus-launcher";
-  version = "1.22.6";
+  version = "1.22.7";
 
   src = fetchFromGitHub {
     owner = "Faugus";
     repo = "faugus-launcher";
     rev = version;
-    hash = "sha256-hN0DU7MFlG8+TVQ2pWRRIVIDlmmHE54Dv/PqFAwwECs=";
+    hash = "sha256-Ki1Me/mh8zniCpjjFVl1Dv/svJ0ZgDKVOG1vmhoLxIo=";
   };
 
   pyproject = false;
