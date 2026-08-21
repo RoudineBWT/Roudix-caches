@@ -1,12 +1,12 @@
 {
   inputs = {
     nixpkgs.url     = "github:nixos/nixpkgs/nixos-unstable";
-    nixpkgs-scx.url  = "github:nixos/nixpkgs/master";
+    #nixpkgs-scx.url  = "github:nixos/nixpkgs/master";
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { nixpkgs, nixpkgs-scx, rust-overlay, self, ... }:
+  outputs = { nixpkgs, rust-overlay, self, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -14,7 +14,7 @@
         config.allowUnfree = true;
         overlays = [ rust-overlay.overlays.default ];
       };
-      pkgs-scx = import nixpkgs-scx { inherit system; };
+      #pkgs-scx = import nixpkgs-scx { inherit system; };
 
       # rustc stable latest — garanti >= 1.95 quel que soit le commit nixpkgs
       rustPlatform = pkgs.makeRustPlatform {
@@ -28,7 +28,7 @@
         lutris-custom = pkgs.callPackage ./pkgs/lutris/default.nix {};
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
         openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
-        scx           = pkgs-scx.scx;
+        #scx           = pkgs-scx.scx;
       };
     };
 }
