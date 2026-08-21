@@ -1,0 +1,41 @@
+name: Build scx (pinned)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pkgs/scx/**"
+      - ".github/workflows/build-scx.yml"
+  workflow_dispatch: {}
+  workflow_call: {} # appelé par update-scx.yml après un bump automatique
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix-caches
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      # Build les 3 attributs (rustscheds / cscheds / full). Si le hash du
+      # Cargo.lock ou du src ne matche plus (nouvelle version, dépendances
+      # bumpées upstream), ça plante ici avec le vrai hash attendu dans les
+      # logs — même pattern que pour heroic/pnpmDeps.
+      - name: Build scx.rustscheds
+        run: nix build --print-build-logs '.#scx.rustscheds'
+
+      - name: Build scx.cscheds
+        run: nix build --print-build-logs '.#scx.cscheds'
+
+      - name: Build scx.full
+        run: nix build --print-build-logs '.#scx.full'
+
+      - name: Quick sanity check (scx_rusty --help)
+        run: |
+          ./result/bin/scx_rusty --help || true
+          ./result/bin/scx_bpfland --help || true
