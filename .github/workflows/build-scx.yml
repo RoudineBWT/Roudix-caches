@@ -19,7 +19,7 @@ jobs:
 
       - uses: cachix/cachix-action@v15
         with:
-          name: roudix-caches
+          name: roudix
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
       # Build les 3 attributs (rustscheds / cscheds / full). Si le hash du
