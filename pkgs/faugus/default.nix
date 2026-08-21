@@ -3,18 +3,18 @@
   fetchFromGitHub,
   # build
   coreutils,
-  gettext,
   gobject-introspection,
-  gtk3,
+  gtk4,
   hicolor-icon-theme,
   icoextract,
-  imagemagick,
-  libayatana-appindicator,
-  libcanberra-gtk3,
+  libadwaita,
+  libmanette,
   makeWrapper,
+  meson,
+  ninja,
+  pkg-config,
   python3Packages,
-  shared-mime-info,
-  wrapGAppsHook3,
+  wrapGAppsHook4,
   xdg-utils,
   # runtime
   umu-launcher,
@@ -25,6 +25,7 @@
 
 let
   pythonDeps = with python3Packages; [
+    dbus-python
     pillow
     psutil
     pygobject3
@@ -34,14 +35,16 @@ let
 
   pythonPath = python3Packages.makePythonPath pythonDeps;
 
-  # Depuis 1.22.5, les paths lsfg-vk ont migré dans path_manager.py sous forme
-  # de listes candidates. On remplace les paths hardcodés par ceux du store Nix.
-  # Si lsfg-vk est null, on laisse les paths upstream (détection runtime).
+  # Depuis la 2.1.0 les paths lsfg-vk ont migré dans path_manager.py. On
+  # remplace les paths hardcodés par ceux du store Nix. Si lsfg-vk est null,
+  # on laisse les paths upstream (détection runtime).
   lsfgSubstitutions = lib.optionalString (lsfg-vk != null) ''
     substituteInPlace faugus/path_manager.py \
+      --replace-fail "/usr/lib/extensions/vulkan/lsfgvk/lib/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
       --replace-fail "/usr/lib/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
-      --replace-fail "/usr/lib64/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
       --replace-fail "/usr/local/lib/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
+      --replace-fail "/usr/lib64/liblsfg-vk.so" "${lsfg-vk}/lib/liblsfg-vk.so" \
+      --replace-fail "/usr/lib/extensions/vulkan/lsfgvk/lib/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
       --replace-fail "/usr/lib/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so" \
       --replace-fail "/usr/lib64/liblsfg-vk-layer.so" "${lsfg-vk}/lib/liblsfg-vk-layer.so"
   '';
@@ -60,19 +63,22 @@ python3Packages.buildPythonApplication rec {
   };
 
   pyproject = false;
-  dontBuild = true;
   doCheck = false;
 
   nativeBuildInputs = [
-    gettext
     gobject-introspection
     makeWrapper
-    wrapGAppsHook3
+    meson
+    ninja
+    pkg-config
+    wrapGAppsHook4
   ];
 
   buildInputs = [
-    gtk3
-    libayatana-appindicator
+    gtk4
+    hicolor-icon-theme
+    libadwaita
+    libmanette
   ];
 
   propagatedBuildInputs = pythonDeps;
@@ -81,90 +87,15 @@ python3Packages.buildPythonApplication rec {
     substituteInPlace faugus-launcher \
       --replace-fail "/usr/bin/python3" "${python3Packages.python}/bin/python3"
 
+    # Le refactor 2.x centralise les paths UMU dans path_manager.py.
     substituteInPlace faugus/path_manager.py \
-      --replace-fail "PathManager.user_data('faugus-launcher/umu-run')" "'${lib.getExe umu-launcher}'"
+      --replace-fail "UMU_RUN = PathManager.user_data('faugus-launcher/umu-run')" "UMU_RUN = '${lib.getExe umu-launcher}'"
 
     ${lsfgSubstitutions}
   '';
 
   patches = [
   ];
-
-  installPhase = ''
-    runHook preInstall
-
-    mkdir -p $out/bin
-    mkdir -p $out/${python3Packages.python.sitePackages}
-    mkdir -p $out/share
-    mkdir -p $out/share/${pname}
-    mkdir -p $out/share/icons/hicolor/scalable/apps
-    mkdir -p $out/share/icons/hicolor/256x256/apps
-    mkdir -p $out/share/applications
-    mkdir -p $out/share/metainfo
-    mkdir -p $out/share/locale
-
-    cp -r faugus $out/${python3Packages.python.sitePackages}/
-    touch $out/${python3Packages.python.sitePackages}/faugus/__init__.py
-
-    if [ -d assets ]; then cp -r assets/* $out/share/${pname}/; fi
-    if [ -f LICENSE ]; then
-      mkdir -p $out/share/licenses/${pname}
-      cp LICENSE $out/share/licenses/${pname}/
-    fi
-
-    install -Dm755 faugus-launcher $out/bin/faugus-launcher
-    if [ -f faugus_run.py ]; then
-      install -Dm755 faugus_run.py $out/bin/faugus-run
-    fi
-
-    # Icons
-    while IFS= read -r -d $'\0' file; do
-      base="$(basename "$file")"
-      case "$base" in
-        *.svg) cp "$file" "$out/share/icons/hicolor/scalable/apps/$base" ;;
-        *.png) cp "$file" "$out/share/icons/hicolor/256x256/apps/$base" ;;
-      esac
-    done < <(find . -type f \( -iname 'faugus-*.png' -o -iname 'faugus-*.svg' \) -print0)
-
-    # Traductions .po → .mo
-    if find languages -mindepth 2 -type f -name '*.po' | grep -q . 2>/dev/null; then
-      while IFS= read -r po; do
-        domain="$(basename "$po" .po)"
-        lang="$(basename "$(dirname "$po")")"
-        mkdir -p "$out/share/locale/$lang/LC_MESSAGES"
-        msgfmt "$po" -o "$out/share/locale/$lang/LC_MESSAGES/$domain.mo"
-      done < <(find languages -mindepth 2 -type f -name '*.po' | sort)
-    fi
-
-    # .desktop
-    desktop_file="$(find . -type f -name '*.desktop' | head -n 1 || true)"
-    if [ -n "$desktop_file" ]; then
-      cp "$desktop_file" "$out/share/applications/faugus-launcher.desktop"
-      substituteInPlace $out/share/applications/faugus-launcher.desktop \
-        --replace-warn "Exec=/usr/bin/faugus-launcher" "Exec=faugus-launcher" \
-        --replace-warn "Exec=faugus" "Exec=faugus-launcher" \
-        --replace-warn "Icon=faugus" "Icon=faugus-launcher"
-    else
-      cat > $out/share/applications/faugus-launcher.desktop <<EOF
-[Desktop Entry]
-Name=Faugus Launcher
-Comment=Simple and lightweight app for running Windows games using UMU-Launcher
-Exec=faugus-launcher
-Icon=faugus-launcher
-Terminal=false
-Type=Application
-Categories=Game;
-StartupNotify=true
-EOF
-    fi
-
-    appstream_file="$(find . -type f \( -name '*.appdata.xml' -o -name '*.metainfo.xml' \) | head -n 1 || true)"
-    if [ -n "$appstream_file" ]; then
-      cp "$appstream_file" "$out/share/metainfo/$(basename "$appstream_file")"
-    fi
-
-    runHook postInstall
-  '';
 
   dontWrapGApps = true;
 
@@ -176,27 +107,9 @@ EOF
       --prefix XDG_DATA_DIRS : "$out/share" \
       --suffix PATH : ${lib.makeBinPath [
         coreutils
-        python3Packages.python
-        hicolor-icon-theme
         icoextract
-        imagemagick
-        libcanberra-gtk3
-        shared-mime-info
         xdg-utils
       ]}
-
-    if [ -f $out/bin/faugus-run ]; then
-      wrapProgram $out/bin/faugus-run \
-        --set TZ ":/etc/localtime" \
-        --prefix PYTHONPATH : "$out/${python3Packages.python.sitePackages}:${pythonPath}" \
-        --prefix XDG_DATA_DIRS : "$out/share" \
-        --suffix PATH : ${lib.makeBinPath [
-          coreutils
-          python3Packages.python
-          shared-mime-info
-          xdg-utils
-        ]}
-    fi
   '';
 
   meta = with lib; {
