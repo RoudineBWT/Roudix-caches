@@ -28,7 +28,7 @@
         lutris-custom = pkgs.callPackage ./pkgs/lutris/default.nix {};
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
         openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
-        scx           = pkgs-scx.scx;
+        scx           = pkgs-scx.scx.full;
       };
     };
 }
