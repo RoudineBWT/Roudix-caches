@@ -24,14 +24,25 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # ── 2. Lister les paquets exposés par le flake ─────────────────────
+      - name: Debug - contenu du dossier et du flake
+        run: |
+          echo "=== Répertoire courant ==="
+          pwd
+          ls -la
+          echo ""
+          echo "=== nix flake show (sortie brute, sans filtrer les erreurs) ==="
+          nix flake show --json || true
+
       - name: Lister les paquets du flake
         id: pkgs
         run: |
-          PACKAGES=$(nix flake show --json 2>/dev/null \
-            | jq -r '.packages."x86_64-linux" | keys[]')
+          RAW=$(nix flake show --json)
+          echo "$RAW" | jq .
+
+          PACKAGES=$(echo "$RAW" | jq -r '.packages."x86_64-linux" | keys[]')
 
           if [ -z "$PACKAGES" ]; then
-            echo "Aucun paquet trouvé, vérifie que le flake expose bien des 'packages'."
+            echo "Aucun paquet trouvé sous .packages.x86_64-linux — regarde la sortie JSON ci-dessus pour voir la vraie structure (legacyPackages ? autre system ? etc.)"
             exit 1
           fi
 
