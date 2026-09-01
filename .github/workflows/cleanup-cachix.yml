@@ -69,9 +69,18 @@ jobs:
 
             echo "  store path : $STORE_PATH"
 
+            # On pousse explicitement le path AVANT de le pin : cachix pin exige
+            # que le store path soit déjà présent côté serveur, or le démon
+            # cachix-action ne pousse les nouveautés qu'en fin de job.
+            cachix push roudix "$STORE_PATH" || {
+              echo "  ⚠️  échec du push pour $pkg, skip le pin"
+              continue
+            }
+
             # --keep-revisions 1 : ne garde que la révision qu'on vient de pousser,
             # la précédente sous ce même nom de pin est supprimée par Cachix.
-            cachix pin roudix "$pkg" "$STORE_PATH" --keep-revisions 1
+            cachix pin roudix "$pkg" "$STORE_PATH" --keep-revisions 1 || \
+              echo "  ⚠️  échec du pin pour $pkg (le push a réussi, mais pas le pin)"
           done
 
       # ── 4. Résumé ────────────────────────────────────────────────────
