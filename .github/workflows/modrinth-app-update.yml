@@ -1,0 +1,88 @@
+name: modrinth-app auto-update
+
+on:
+  schedule:
+    # daily check, same cadence as your other cron pipelines (Heroic/Lutris/scx)
+    - cron: "17 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix-caches
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      # ---- 1. is there a newer release upstream? ----
+      - name: Check latest modrinth/code release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          latest_tag=$(gh api repos/modrinth/code/releases/latest --jq .tag_name)
+          latest_version="${latest_tag#v}"
+          current_version=$(nix eval --raw .#modrinth-app-unwrapped.version)
+
+          echo "latest=$latest_version"   >> "$GITHUB_OUTPUT"
+          echo "current=$current_version" >> "$GITHUB_OUTPUT"
+
+          if [ "$latest_version" = "$current_version" ]; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- 2. bump version + src/cargo/pnpm hashes via nix-update ----
+      - name: Run nix-update
+        if: steps.latest.outputs.up_to_date == 'false'
+        run: |
+          set -euo pipefail
+          nix run nixpkgs#nix-update -- \
+            --version "${{ steps.latest.outputs.latest }}" \
+            --flake modrinth-app-unwrapped
+
+      # ---- 3. build (this is also what'd surface a mitmCache/gradle mismatch, ----
+      # ---- since a Java/Gradle dep bump upstream will fail the build here) ----
+      - name: Build modrinth-app
+        if: steps.latest.outputs.up_to_date == 'false'
+        id: build
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          nix build .#modrinth-app .#modrinth-app-unwrapped --print-build-logs
+
+      - name: Push to Cachix
+        if: steps.latest.outputs.up_to_date == 'false' && steps.build.outcome == 'success'
+        run: cachix push roudix-caches ./result*
+
+      # ---- 4. commit the bump so the pinned version lives in git, not just Cachix ----
+      - name: Commit version bump
+        if: steps.latest.outputs.up_to_date == 'false' && steps.build.outcome == 'success'
+        run: |
+          set -euo pipefail
+          git config user.name "roudix-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add modrinth-app-unwrapped/package.nix
+          git commit -m "modrinth-app-unwrapped: ${{ steps.latest.outputs.current }} -> ${{ steps.latest.outputs.latest }}"
+          git push
+
+      # ---- if the build failed (e.g. gradle deps.json needs a manual regen), ----
+      # ---- fail loudly instead of silently pushing a broken bump ----
+      - name: Flag manual intervention needed
+        if: steps.latest.outputs.up_to_date == 'false' && steps.build.outcome != 'success'
+        run: |
+          echo "::error::New modrinth-app release ${{ steps.latest.outputs.latest }} failed to build after nix-update. Likely a Gradle/Java dep change upstream — deps.json needs a manual 'gradle.fetchDeps' regen."
+          exit 1
