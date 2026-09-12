@@ -25,7 +25,6 @@
       packages.x86_64-linux = {
         heroic-custom = pkgs.callPackage ./pkgs/heroic/default.nix {};
         scxctl        = pkgs.callPackage ./pkgs/scxctl.nix { inherit rustPlatform; };
-        lutris-custom = pkgs.callPackage ./pkgs/lutris/default.nix {};
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
         openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
         scx           = pkgs-scx.scx;

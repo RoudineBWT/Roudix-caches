@@ -37,19 +37,6 @@ jobs:
       - name: Install nix-update
         run: nix profile install nixpkgs#nix-update
 
-      # lutris-unwrapped.nix contient le vrai `version`, donc on cible
-      # ce fichier directement. nix-update va lire le fetchFromGitHub,
-      # récupérer la dernière release de lutris/lutris sur GitHub,
-      # mettre à jour version + hash, et committer.
-      - name: Update lutris-custom
-        run: |
-          nix-update lutris-custom \
-            --flake \
-            --version=latest \
-            --override-filename pkgs/lutris/unwrapped.nix \
-            --commit
-        continue-on-error: true
-
       # faugus: les releases sont taguées sans préfixe `v` (ex: 1.19.3).
       # On passe --url pour pointer nix-update vers le bon repo GitHub
       # et --version=stable pour qu'il prenne le dernier tag de release.
@@ -71,8 +58,5 @@ jobs:
 
       # Build tous les packages — cachix-action intercepte automatiquement
       # les sorties et les pousse vers cache.cachix.org/roudix
-      - name: Build lutris-custom
-        run: nix build .#lutris-custom --print-build-logs
-
       - name: Build faugus
         run: nix build .#faugus --print-build-logs
