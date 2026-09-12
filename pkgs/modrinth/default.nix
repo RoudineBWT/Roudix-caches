@@ -28,13 +28,15 @@
 # roudix-caches so we can bump `version` the moment upstream (modrinth/code)
 # cuts a release, instead of waiting on the nixpkgs PR/merge cycle.
 #
-# Update flow: bump `version` + run the three prefetches below (or let
-# `passthru.updateScript` / nix-update do it), see ../.github/workflows/modrinth-app-update.yml
+# Update flow: .github/workflows/modrinth-update.yml patches version, src.hash,
+# cargoHash and pnpmDeps.hash automatically (same probe-and-read-the-error
+# technique as pkgs/heroic/default.nix's pnpmDeps step).
 #
-# NOTE: `mitmCache` (gradle deps) is the one piece nix-update cannot bump for
-# you automatically -- if a release changes the Java/Gradle dependency set,
-# `deps.json` needs regenerating with `gradle.fetchDeps` and committing here.
-# Most point releases only touch Rust/JS deps, which nix-update handles fine.
+# NOTE: `mitmCache` (gradle deps, deps.json) is NOT auto-bumped -- it only
+# needs to change if a release adds/updates a Java/Gradle dependency, which
+# is rare. If the CI build fails after patching the three hashes above,
+# that's the likely cause: regenerate deps.json with `gradle.fetchDeps` and
+# commit it manually.
 
 let
   gradle = gradle_9.override { java = jdk; };

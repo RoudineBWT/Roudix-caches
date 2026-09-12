@@ -1,0 +1,190 @@
+name: Update and build modrinth-app
+
+on:
+  schedule:
+    - cron: "30 8 * * *" # tous les jours à 8h30, juste après le run heroic
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # ── 1. Version courante extraite du fichier nix ───────────────────────
+      - name: Read current version
+        id: current
+        run: |
+          NIX="pkgs/modrinth/default.nix"
+          MODRINTH_CUR=$(grep -oP 'version\s*=\s*"\K[^"]+' "$NIX" | head -1)
+
+          echo "modrinth=$MODRINTH_CUR" >> "$GITHUB_OUTPUT"
+
+          echo "=== Version actuelle ==="
+          echo "modrinth: $MODRINTH_CUR"
+
+      # ── 2. Version upstream ────────────────────────────────────────────────
+      - name: Fetch upstream version
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MODRINTH_TAG=$(gh release view \
+            --repo modrinth/code \
+            --json tagName -q .tagName)
+          MODRINTH_NEW="${MODRINTH_TAG#v}"
+
+          echo "modrinth=$MODRINTH_NEW"     >> "$GITHUB_OUTPUT"
+          echo "modrinth_tag=$MODRINTH_TAG" >> "$GITHUB_OUTPUT"
+
+          echo "=== Version upstream ==="
+          echo "modrinth: $MODRINTH_NEW"
+
+      # ── 3. Détecter ce qui a changé ────────────────────────────────────────
+      - name: Detect changes
+        id: changes
+        run: |
+          MODRINTH_CHANGED=false
+
+          [ "${{ steps.upstream.outputs.modrinth }}" != "${{ steps.current.outputs.modrinth }}" ] \
+            && MODRINTH_CHANGED=true
+
+          echo "modrinth=$MODRINTH_CHANGED" >> "$GITHUB_OUTPUT"
+
+          echo "=== Changement détecté ==="
+          echo "modrinth: $MODRINTH_CHANGED"
+
+      # ── 4a. Hash source ─────────────────────────────────────────────────────
+      - name: Compute modrinth src hash
+        if: steps.changes.outputs.modrinth == 'true'
+        id: hash_src
+        run: |
+          TAG="${{ steps.upstream.outputs.modrinth_tag }}"
+          HASH=$(nix-prefetch-url --unpack \
+            "https://github.com/modrinth/code/archive/refs/tags/${TAG}.tar.gz" \
+            2>/dev/null | tail -1 | xargs nix hash convert --hash-algo sha256 --to sri)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "modrinth src hash: $HASH"
+
+      # ── 4b. Hash cargoHash + pnpmDeps (probe conjoint) ─────────────────────
+      # Même technique que pour pnpmDeps dans le pipeline heroic, mais il y a
+      # ici DEUX fixed-output derivations à vider (cargo vendor + pnpm), donc
+      # on build avec --keep-going pour récupérer les deux erreurs de hash
+      # dans la même sortie, puis on associe chaque "got:" à son derivation
+      # selon ce que contient son nom de store path.
+      - name: Compute cargo + pnpm deps hash
+        if: steps.changes.outputs.modrinth == 'true'
+        id: hash_deps
+        env:
+          MODRINTH_NEW: ${{ steps.upstream.outputs.modrinth }}
+          SRC_HASH: ${{ steps.hash_src.outputs.hash }}
+        run: |
+          python3 - <<'EOF'
+          import re, os
+
+          content = open("pkgs/modrinth/default.nix").read()
+
+          modrinth_new = os.environ["MODRINTH_NEW"]
+          src_hash     = os.environ["SRC_HASH"]
+
+          content = re.sub(r'(version\s*=\s*")[^"]*(")', rf'\g<1>{modrinth_new}\2', content, count=1)
+          content = re.sub(r'(src = fetchFromGitHub \{.*?hash\s*=\s*")[^"]*(")',
+                            rf'\g<1>{src_hash}\2', content, count=1, flags=re.S)
+          # vider cargoHash et le hash de pnpmDeps pour forcer nix à révéler
+          # les vrais hashes dans son message d'erreur
+          content = re.sub(r'(cargoHash\s*=\s*")[^"]*(")', r'\g<1>\2', content, count=1)
+          content = re.sub(r'(pnpmDeps = fetchPnpmDeps \{.*?hash\s*=\s*")[^"]*(")',
+                            r'\g<1>\2', content, count=1, flags=re.S)
+
+          open("pkgs/modrinth/default.nix", "w").write(content)
+          EOF
+
+          echo "=== default.nix patché pour probe ==="
+          git diff pkgs/modrinth/default.nix
+
+          NIX_OUTPUT=$(nix build .#modrinth-app-custom --keep-going 2>&1) || true
+          echo "$NIX_OUTPUT"
+
+          # On associe chaque "got:" à cargo ou pnpm selon ce qui apparaît juste
+          # au-dessus (le nom du store path de la derivation qui a raté).
+          CARGO_HASH=$(echo "$NIX_OUTPUT" | grep -B2 'got:' | grep -A2 -i 'cargo-vendor\|\.crate' | grep 'got:' | awk '{print $2}' | head -1)
+          PNPM_HASH=$(echo "$NIX_OUTPUT"  | grep -B2 'got:' | grep -A2 -i 'pnpm'                | grep 'got:' | awk '{print $2}' | head -1)
+
+          git checkout pkgs/modrinth/default.nix
+
+          if [[ "$CARGO_HASH" != sha256-* || "$PNPM_HASH" != sha256-* ]]; then
+            echo "ERREUR: impossible d'extraire cargoHash et/ou pnpmDeps hash. Sortie nix build:"
+            echo "$NIX_OUTPUT"
+            echo "Rappel: si Modrinth a changé une dépendance Java/Gradle, deps.json doit être régénéré à la main (gradle.fetchDeps)."
+            exit 1
+          fi
+
+          echo "cargo=$CARGO_HASH" >> "$GITHUB_OUTPUT"
+          echo "pnpm=$PNPM_HASH"   >> "$GITHUB_OUTPUT"
+          echo "cargoHash: $CARGO_HASH"
+          echo "pnpmDeps hash: $PNPM_HASH"
+
+      # ── 5. Patcher default.nix pour de bon ─────────────────────────────────
+      - name: Patch default.nix
+        if: steps.changes.outputs.modrinth == 'true'
+        env:
+          MODRINTH_NEW: ${{ steps.upstream.outputs.modrinth }}
+          SRC_HASH: ${{ steps.hash_src.outputs.hash }}
+          CARGO_HASH: ${{ steps.hash_deps.outputs.cargo }}
+          PNPM_HASH: ${{ steps.hash_deps.outputs.pnpm }}
+        run: |
+          python3 - <<'EOF'
+          import re, os
+
+          content = open("pkgs/modrinth/default.nix").read()
+
+          modrinth_new = os.environ["MODRINTH_NEW"]
+          src_hash     = os.environ["SRC_HASH"]
+          cargo_hash   = os.environ["CARGO_HASH"]
+          pnpm_hash    = os.environ["PNPM_HASH"]
+
+          content = re.sub(r'(version\s*=\s*")[^"]*(")', rf'\g<1>{modrinth_new}\2', content, count=1)
+          content = re.sub(r'(src = fetchFromGitHub \{.*?hash\s*=\s*")[^"]*(")',
+                            rf'\g<1>{src_hash}\2', content, count=1, flags=re.S)
+          content = re.sub(r'(cargoHash\s*=\s*")[^"]*(")', rf'\g<1>{cargo_hash}\2', content, count=1)
+          content = re.sub(r'(pnpmDeps = fetchPnpmDeps \{.*?hash\s*=\s*")[^"]*(")',
+                            rf'\g<1>{pnpm_hash}\2', content, count=1, flags=re.S)
+
+          open("pkgs/modrinth/default.nix", "w").write(content)
+          EOF
+
+          echo "=== default.nix après patch ==="
+          git diff pkgs/modrinth/default.nix
+
+      # ── 6. Build + push cachix ──────────────────────────────────────────────
+      - name: Build modrinth-app-custom
+        if: steps.changes.outputs.modrinth == 'true'
+        run: |
+          nix build .#modrinth-app-custom .#modrinth-app-wrapped-custom --print-build-logs
+
+      # ── 7. Commit + push direct sur main ────────────────────────────────────
+      - name: Commit and push
+        if: steps.changes.outputs.modrinth == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add pkgs/modrinth/default.nix
+
+          MSG="modrinth-app: ${{ steps.current.outputs.modrinth }} → ${{ steps.upstream.outputs.modrinth }}"
+
+          git commit -m "$MSG"
+          git push origin HEAD:main

@@ -29,9 +29,9 @@
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
         openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
         scx           = pkgs-scx.scx;
-        modrinth-app-unwrapped = pkgs.callPackage ./modrinth-app-unwrapped/package.nix { };
-          modrinth-app = pkgs.callPackage ./modrinth-app/package.nix {
-            inherit (self.packages.${system}) modrinth-app-unwrapped;
+        modrinth-app-custom = pkgs.callPackage ./pkgs/modrinth/default.nix { };
+        modrinth-app-wrapped-custom = pkgs.callPackage ./pkgs/modrinth/wrapped.nix {
+          modrinth-app-unwrapped = self.packages.${system}.modrinth-app-custom;
           };
       };
     };
