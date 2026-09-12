@@ -10,6 +10,7 @@
   kdePackages,
   libarchive,
   ninja,
+  nix-update-script,
   qrencode,
   stripJavaArchivesHook,
   tomlplusplus,
@@ -23,8 +24,8 @@
 # cuts a release, instead of waiting on the nixpkgs PR/merge cycle.
 #
 # Update flow: .github/workflows/prismlauncher-update.yml bumps `version` and
-# `src.hash` automatically via nix-prefetch-url (same as pkgs/heroic/legendary.nix
-# -- there's only ONE hash here, no probe step needed like modrinth-app).
+# `src.hash` automatically via `nix-update` (passthru.updateScript below,
+# same mechanism nixpkgs itself uses for this package).
 #
 # NOTE: `libnbtplusplus` below is a separate pinned dependency (its own rev +
 # hash) that PrismLauncher vendors as a submodule. It changes far less often
@@ -92,6 +93,10 @@ stdenv.mkDerivation (finalAttrs: {
   doCheck = true;
 
   dontWrapQtApps = true;
+
+  passthru = {
+    updateScript = nix-update-script { };
+  };
 
   meta = {
     description = "Free, open source launcher for Minecraft";
