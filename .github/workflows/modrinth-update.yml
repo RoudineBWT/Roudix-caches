@@ -120,7 +120,9 @@ jobs:
 
           # On associe chaque "got:" à cargo ou pnpm selon ce qui apparaît juste
           # au-dessus (le nom du store path de la derivation qui a raté).
-          CARGO_HASH=$(echo "$NIX_OUTPUT" | grep -B2 'got:' | grep -A2 -i 'cargo-vendor\|\.crate' | grep 'got:' | awk '{print $2}' | head -1)
+          # NB: la FOD cargo s'appelle "<pname>-<version>-vendor-staging.drv",
+          # pas "cargo-vendor"/".crate" -- d'où le pattern "vendor" ci-dessous.
+          CARGO_HASH=$(echo "$NIX_OUTPUT" | grep -B2 'got:' | grep -A2 -i 'vendor' | grep 'got:' | awk '{print $2}' | head -1)
           PNPM_HASH=$(echo "$NIX_OUTPUT"  | grep -B2 'got:' | grep -A2 -i 'pnpm'                | grep 'got:' | awk '{print $2}' | head -1)
 
           git checkout pkgs/modrinth/default.nix
