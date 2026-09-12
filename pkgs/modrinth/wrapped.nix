@@ -24,6 +24,7 @@
   pipewire,
   symlinkJoin,
   udev,
+  vulkan-loader,
   wrapGAppsHook3,
   libxxf86vm,
   libxrandr,
@@ -67,6 +68,7 @@ symlinkJoin {
       libpulseaudio
       pipewire
       udev
+      vulkan-loader
     ]
   );
 
