@@ -33,6 +33,10 @@
         modrinth-app-wrapped-custom = pkgs.callPackage ./pkgs/modrinth/wrapped.nix {
           modrinth-app-unwrapped = self.packages.${system}.modrinth-app-custom;
           };
+          prismlauncher-custom = pkgs.callPackage ./pkgs/prismlauncher/default.nix { };
+           prismlauncher-wrapped-custom = pkgs.callPackage ./pkgs/prismlauncher/wrapped.nix {
+             prismlauncher-unwrapped = self.packages.${system}.prismlauncher-custom;
+           };
       };
     };
 }

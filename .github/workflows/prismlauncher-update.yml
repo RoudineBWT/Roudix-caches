@@ -1,0 +1,130 @@
+name: Update and build prismlauncher
+
+on:
+  schedule:
+    - cron: "45 8 * * *" # tous les jours à 8h45
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # ── 1. Version courante extraite du fichier nix ───────────────────────
+      - name: Read current version
+        id: current
+        run: |
+          NIX="pkgs/prismlauncher/default.nix"
+          PRISM_CUR=$(grep -oP 'version\s*=\s*"\K[^"]+' "$NIX" | head -1)
+
+          echo "prism=$PRISM_CUR" >> "$GITHUB_OUTPUT"
+
+          echo "=== Version actuelle ==="
+          echo "prism: $PRISM_CUR"
+
+      # ── 2. Version upstream ────────────────────────────────────────────────
+      - name: Fetch upstream version
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRISM_TAG=$(gh release view \
+            --repo PrismLauncher/PrismLauncher \
+            --json tagName -q .tagName)
+          # pas de préfixe "v" sur les tags PrismLauncher, contrairement à modrinth/heroic
+          PRISM_NEW="$PRISM_TAG"
+
+          echo "prism=$PRISM_NEW"     >> "$GITHUB_OUTPUT"
+          echo "prism_tag=$PRISM_TAG" >> "$GITHUB_OUTPUT"
+
+          echo "=== Version upstream ==="
+          echo "prism: $PRISM_NEW"
+
+      # ── 3. Détecter ce qui a changé ────────────────────────────────────────
+      - name: Detect changes
+        id: changes
+        run: |
+          PRISM_CHANGED=false
+
+          [ "${{ steps.upstream.outputs.prism }}" != "${{ steps.current.outputs.prism }}" ] \
+            && PRISM_CHANGED=true
+
+          echo "prism=$PRISM_CHANGED" >> "$GITHUB_OUTPUT"
+
+          echo "=== Changement détecté ==="
+          echo "prism: $PRISM_CHANGED"
+
+      # ── 4. Hash source ────────────────────────────────────────────────────
+      - name: Compute prismlauncher src hash
+        if: steps.changes.outputs.prism == 'true'
+        id: hash_src
+        run: |
+          TAG="${{ steps.upstream.outputs.prism_tag }}"
+          HASH=$(nix-prefetch-url --unpack \
+            "https://github.com/PrismLauncher/PrismLauncher/archive/refs/tags/${TAG}.tar.gz" \
+            2>/dev/null | tail -1 | xargs nix hash convert --hash-algo sha256 --to sri)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "prismlauncher src hash: $HASH"
+
+      # ── 5. Patcher default.nix ───────────────────────────────────────────
+      - name: Patch default.nix
+        if: steps.changes.outputs.prism == 'true'
+        env:
+          PRISM_NEW: ${{ steps.upstream.outputs.prism }}
+          SRC_HASH: ${{ steps.hash_src.outputs.hash }}
+        run: |
+          NIX="pkgs/prismlauncher/default.nix"
+          sed -i "0,/version = \"[^\"]*\"/s//version = \"${PRISM_NEW}\"/" "$NIX"
+          # 1ère occurrence de "hash =" après "version" est le src.hash
+          # (le hash de libnbtplusplus n'est jamais touché ici)
+          python3 - <<'EOF'
+          import re, os
+
+          content = open("pkgs/prismlauncher/default.nix").read()
+          src_hash = os.environ["SRC_HASH"]
+
+          content = re.sub(
+              r'(src = fetchFromGitHub \{.*?hash\s*=\s*")[^"]*(")',
+              rf'\g<1>{src_hash}\2',
+              content, count=1, flags=re.S,
+          )
+
+          open("pkgs/prismlauncher/default.nix", "w").write(content)
+          EOF
+
+          echo "=== default.nix après patch ==="
+          git diff "$NIX"
+
+      # ── 6. Build + push cachix ────────────────────────────────────────────
+      - name: Build prismlauncher
+        if: steps.changes.outputs.prism == 'true'
+        run: |
+          nix build .#prismlauncher-custom .#prismlauncher-wrapped-custom --print-build-logs
+
+      # ── 7. Commit + push direct sur main ──────────────────────────────────
+      - name: Commit and push
+        if: steps.changes.outputs.prism == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add pkgs/prismlauncher/default.nix
+
+          MSG="prismlauncher: ${{ steps.current.outputs.prism }} → ${{ steps.upstream.outputs.prism }}"
+
+          git commit -m "$MSG"
+          git push origin HEAD:main

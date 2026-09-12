@@ -1,0 +1,75 @@
+name: Rebuild modrinth & prismlauncher
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Quoi rebuild"
+        type: choice
+        default: both
+        options:
+          - both
+          - modrinth
+          - prismlauncher
+  push:
+    branches: [main]
+    paths:
+      - "pkgs/modrinth/**"
+      - "pkgs/prismlauncher/**"
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # ── déclenché par push: ne build que ce qui a changé ────────────────────
+      - name: Detect changed paths
+        id: changed
+        if: github.event_name == 'push'
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            # premier push / historique réécrit : on ne sait pas ce qui a changé, on build tout
+            CHANGED=$'pkgs/modrinth/\npkgs/prismlauncher/'
+          else
+            CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
+          fi
+
+          modrinth=false
+          prism=false
+          echo "$CHANGED" | grep -q '^pkgs/modrinth/'      && modrinth=true
+          echo "$CHANGED" | grep -q '^pkgs/prismlauncher/' && prism=true
+
+          echo "modrinth=$modrinth" >> "$GITHUB_OUTPUT"
+          echo "prismlauncher=$prism" >> "$GITHUB_OUTPUT"
+
+      # ── déclenché à la main: on suit le choix du menu ───────────────────────
+      - name: Resolve manual target
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          target="${{ inputs.target }}"
+          echo "modrinth=$([[ "$target" == "both" || "$target" == "modrinth" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "prismlauncher=$([[ "$target" == "both" || "$target" == "prismlauncher" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Build modrinth-app
+        if: steps.changed.outputs.modrinth == 'true' || steps.manual.outputs.modrinth == 'true'
+        run: nix build .#modrinth-app-custom .#modrinth-app-wrapped-custom --print-build-logs
+
+      - name: Build prismlauncher
+        if: steps.changed.outputs.prismlauncher == 'true' || steps.manual.outputs.prismlauncher == 'true'
+        run: nix build .#prismlauncher-custom .#prismlauncher-wrapped-custom --print-build-logs
