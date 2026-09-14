@@ -45,13 +45,13 @@ in
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "modrinth-app-unwrapped";
-  version = "0.20.4"; # <- bumped by CI / nix-update
+  version = "0.20.5"; # <- bumped by CI / nix-update
 
   src = fetchFromGitHub {
     owner = "modrinth";
     repo = "code";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-FaM0gkGiWNC3fpd63HiijJwg+5ixsgvFpf4DvuMrKbs="; # <- bumped by CI / nix-update
+    hash = "sha256-LhXpd2J0hIyPKwcR4llC2uxmPcYBa12Fvakth7juRaE="; # <- bumped by CI / nix-update
   };
 
   patches = [
@@ -86,7 +86,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     inherit (finalAttrs) pname version src;
     pnpm = pnpm_10;
     fetcherVersion = 3;
-    hash = "sha256-A8mxLcpBX82iZkC66XhdziOvzLxEALEdFw3MBoLLNoo="; # <- bumped by CI / nix-update
+    hash = "sha256-soooHZJ4OQ+MshWMIhpPURZkMMkpFkZa6AEaiEAm3ts="; # <- bumped by CI / nix-update
   };
 
   nativeBuildInputs = [
