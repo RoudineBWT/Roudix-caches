@@ -24,25 +24,22 @@ jobs:
           name: roudix
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      # ── 1. Versions courantes extraites des fichiers nix ──────────────────
-      - name: Read current versions
+      # ── 1. Version courante extraite du fichier nix ───────────────────────
+      # Legendary n'est plus packagé ici : on utilise legendary-gl de nixpkgs,
+      # dont la version suit le pin de l'input nixpkgs du flake, pas ce repo.
+      - name: Read current version
         id: current
         run: |
           NIX="pkgs/heroic/default.nix"
-          LEG="pkgs/heroic/legendary.nix"
-
           HEROIC_CUR=$(grep -oP 'version\s*=\s*"\K[^"]+' "$NIX" | head -1)
-          LEG_CUR=$(grep    -oP 'version\s*=\s*"\K[^"]+' "$LEG" | head -1)
 
-          echo "heroic=$HEROIC_CUR"  >> "$GITHUB_OUTPUT"
-          echo "legendary=$LEG_CUR" >> "$GITHUB_OUTPUT"
+          echo "heroic=$HEROIC_CUR" >> "$GITHUB_OUTPUT"
 
-          echo "=== Versions actuelles ==="
-          echo "heroic:    $HEROIC_CUR"
-          echo "legendary: $LEG_CUR"
+          echo "=== Version actuelle ==="
+          echo "heroic: $HEROIC_CUR"
 
-      # ── 2. Versions upstream ──────────────────────────────────────────────
-      - name: Fetch upstream versions
+      # ── 2. Version upstream ────────────────────────────────────────────────
+      - name: Fetch upstream version
         id: upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,41 +49,86 @@ jobs:
             --json tagName -q .tagName)
           HEROIC_NEW="${HEROIC_TAG#v}"
 
-          LEG_TAG=$(gh release view \
-            --repo Heroic-Games-Launcher/legendary \
-            --json tagName -q .tagName)
-          LEG_NEW="${LEG_TAG#v}"
+          echo "heroic=$HEROIC_NEW"     >> "$GITHUB_OUTPUT"
+          echo "heroic_tag=$HEROIC_TAG" >> "$GITHUB_OUTPUT"
 
-          echo "heroic=$HEROIC_NEW"      >> "$GITHUB_OUTPUT"
-          echo "heroic_tag=$HEROIC_TAG"  >> "$GITHUB_OUTPUT"
-          echo "legendary=$LEG_NEW"      >> "$GITHUB_OUTPUT"
+          echo "=== Version upstream ==="
+          echo "heroic: $HEROIC_NEW"
 
-          echo "=== Versions upstream ==="
-          echo "heroic:    $HEROIC_NEW"
-          echo "legendary: $LEG_NEW"
+      # ── 2b. Heroic mentionne-t-il un bump de Legendary dans son changelog ? ─
+      # Non-bloquant : Heroic écrit parfois "Update Legendary to X.Y.Z" dans
+      # ses release notes. On compare à la version épinglée par legendary-gl
+      # dans notre nixpkgs, pour être averti si un écart apparaît — sans
+      # jamais faire échouer le build sur la base d'un simple grep de texte
+      # libre.
+      - name: Check legendary compatibility hint
+        id: legendary_check
+        if: steps.upstream.outputs.heroic != steps.current.outputs.heroic
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEROIC_CUR: ${{ steps.current.outputs.heroic }}
+        run: |
+          set +e
 
-      # ── 3. Détecter ce qui a changé ───────────────────────────────────────
+          # Toutes les releases Heroic publiées depuis notre version actuelle
+          # (exclue) jusqu'à la nouvelle (incluse), plus anciennes en dernier.
+          TAGS=$(gh api \
+            repos/Heroic-Games-Launcher/HeroicGamesLauncher/releases \
+            --paginate -q '.[].tag_name')
+
+          MENTIONED=""
+          for TAG in $TAGS; do
+            VER="${TAG#v}"
+            # On s'arrête dès qu'on retombe sur la version actuelle : tout ce
+            # qui est au-dessus a été publié depuis notre dernier bump.
+            [ "$VER" = "$HEROIC_CUR" ] && break
+
+            BODY=$(gh api "repos/Heroic-Games-Launcher/HeroicGamesLauncher/releases/tags/$TAG" -q .body)
+            HIT=$(echo "$BODY" | grep -ioE 'legendary.{0,15}(to|v)[[:space:]]*[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+            if [ -n "$HIT" ]; then
+              MENTIONED="$HIT (release $TAG)"
+              break
+            fi
+          done
+
+          if [ -n "$MENTIONED" ]; then
+            echo "mentioned=true" >> "$GITHUB_OUTPUT"
+            echo "detail=$MENTIONED" >> "$GITHUB_OUTPUT"
+            echo "=== Legendary mentionné dans le changelog Heroic ==="
+            echo "$MENTIONED"
+          else
+            echo "mentioned=false" >> "$GITHUB_OUTPUT"
+            echo "=== Aucune mention de Legendary dans les changelogs depuis $HEROIC_CUR ==="
+          fi
+
+      - name: Compare with pinned legendary-gl version
+        if: steps.legendary_check.outputs.mentioned == 'true'
+        run: |
+          PINNED=$(nix eval --raw .#heroic-custom.legendary-gl.version 2>/dev/null)
+          echo "legendary-gl épinglé dans notre nixpkgs : $PINNED"
+          echo "Changelog Heroic mentionne : ${{ steps.legendary_check.outputs.detail }}"
+
+          if ! echo "${{ steps.legendary_check.outputs.detail }}" | grep -q "$PINNED"; then
+            echo "::warning::Heroic ${{ steps.upstream.outputs.heroic }} mentionne un changement Legendary (${{ steps.legendary_check.outputs.detail }}) qui ne correspond pas à legendary-gl $PINNED épinglé par notre nixpkgs. Vérifier la compatibilité runtime (login/installation de jeux Epic) et éventuellement mettre à jour l'input nixpkgs."
+          else
+            echo "Version cohérente avec notre pin nixpkgs, rien à signaler."
+          fi
+
+      # ── 3. Détecter ce qui a changé ────────────────────────────────────────
       - name: Detect changes
         id: changes
         run: |
           HEROIC_CHANGED=false
-          LEG_CHANGED=false
-          ANY=false
 
-          [ "${{ steps.upstream.outputs.heroic }}"    != "${{ steps.current.outputs.heroic }}"   ] \
-            && HEROIC_CHANGED=true && ANY=true
-          [ "${{ steps.upstream.outputs.legendary }}" != "${{ steps.current.outputs.legendary }}" ] \
-            && LEG_CHANGED=true   && ANY=true
+          [ "${{ steps.upstream.outputs.heroic }}" != "${{ steps.current.outputs.heroic }}" ] \
+            && HEROIC_CHANGED=true
 
-          echo "heroic=$HEROIC_CHANGED"   >> "$GITHUB_OUTPUT"
-          echo "legendary=$LEG_CHANGED"   >> "$GITHUB_OUTPUT"
-          echo "any=$ANY"                 >> "$GITHUB_OUTPUT"
+          echo "heroic=$HEROIC_CHANGED" >> "$GITHUB_OUTPUT"
 
-          echo "=== Changements détectés ==="
-          echo "heroic:    $HEROIC_CHANGED"
-          echo "legendary: $LEG_CHANGED"
+          echo "=== Changement détecté ==="
+          echo "heroic: $HEROIC_CHANGED"
 
-      # ── 4a. Hash source Heroic ────────────────────────────────────────────
+      # ── 4a. Hash source Heroic ─────────────────────────────────────────────
       - name: Compute heroic src hash
         if: steps.changes.outputs.heroic == 'true'
         id: hash_heroic_src
@@ -98,7 +140,7 @@ jobs:
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
           echo "heroic src hash: $HASH"
 
-      # ── 4b. Hash pnpmDeps ─────────────────────────────────────────────────
+      # ── 4b. Hash pnpmDeps ──────────────────────────────────────────────────
       - name: Compute pnpm deps hash
         if: steps.changes.outputs.heroic == 'true'
         id: hash_pnpm
@@ -147,19 +189,7 @@ jobs:
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
           echo "pnpm deps hash: $HASH"
 
-      # ── 4c. Hash legendary ────────────────────────────────────────────────
-      - name: Compute legendary hash
-        if: steps.changes.outputs.legendary == 'true'
-        id: hash_legendary
-        run: |
-          VER="${{ steps.upstream.outputs.legendary }}"
-          HASH=$(nix-prefetch-url --unpack \
-            "https://github.com/Heroic-Games-Launcher/legendary/archive/refs/tags/${VER}.tar.gz" \
-            2>/dev/null | tail -1 | xargs nix hash convert --hash-algo sha256 --to sri)
-          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
-          echo "legendary hash: $HASH"
-
-      # ── 5a. Patcher default.nix ───────────────────────────────────────────
+      # ── 5. Patcher default.nix ─────────────────────────────────────────────
       - name: Patch default.nix
         if: steps.changes.outputs.heroic == 'true'
         env:
@@ -193,38 +223,26 @@ jobs:
           echo "=== default.nix après patch ==="
           git diff pkgs/heroic/default.nix
 
-      # ── 5b. Patcher legendary.nix ─────────────────────────────────────────
-      - name: Patch legendary.nix
-        if: steps.changes.outputs.legendary == 'true'
-        env:
-          LEG_NEW: ${{ steps.upstream.outputs.legendary }}
-          LEG_HASH: ${{ steps.hash_legendary.outputs.hash }}
-        run: |
-          LEG="pkgs/heroic/legendary.nix"
-          sed -i "s|version = \"[^\"]*\"|version = \"${LEG_NEW}\"|"   "$LEG"
-          sed -i "s|hash = \"sha256-[^\"]*\"|hash = \"${LEG_HASH}\"|" "$LEG"
-
-          echo "=== legendary.nix après patch ==="
-          git diff "$LEG"
-
-      # ── 6. Build + push cachix ────────────────────────────────────────────
+      # ── 6. Build + push cachix ─────────────────────────────────────────────
       - name: Build heroic-custom
-        if: steps.changes.outputs.any == 'true'
+        if: steps.changes.outputs.heroic == 'true'
         run: |
           nix build .#heroic-custom --print-build-logs
 
-      # ── 7. Commit + push direct sur main ──────────────────────────────────
+      # ── 7. Commit + push direct sur main ───────────────────────────────────
       - name: Commit and push
-        if: steps.changes.outputs.any == 'true'
+        if: steps.changes.outputs.heroic == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add pkgs/heroic/default.nix pkgs/heroic/legendary.nix
+          git add pkgs/heroic/default.nix
 
           MSG="heroic: ${{ steps.current.outputs.heroic }} → ${{ steps.upstream.outputs.heroic }}"
-          [ "${{ steps.changes.outputs.legendary }}" = "true" ] && \
-            MSG+=$'\n\n'"legendary: ${{ steps.current.outputs.legendary }} → ${{ steps.upstream.outputs.legendary }}"
+
+          if [ "${{ steps.legendary_check.outputs.mentioned }}" = "true" ]; then
+            MSG+=$'\n\n'"⚠️ Changelog Heroic mentionne Legendary : ${{ steps.legendary_check.outputs.detail }} — vérifier legendary-gl (nixpkgs)."
+          fi
 
           git commit -m "$MSG"
           git push origin HEAD:main

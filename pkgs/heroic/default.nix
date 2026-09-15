@@ -12,30 +12,31 @@
   makeWrapper,
   # Electron updates can break Heroic, so try to use same version as upstream.
   # If the used electron version is higher than upstream's then the node-abi package might need to be updated
-  electron,
+  electron_43,
   vulkan-helper,
   gogdl,
+  legendary-gl,
   nile,
   comet-gog_heroic,
   umu-launcher,
 }:
 
 let
- pnpm = pnpm_10;
+  pnpm = pnpm_10;
+  electron = electron_43;
 
-  legendary = callPackage ./legendary.nix { };
   epic-integration = callPackage ./epic-integration.nix { };
   comet-gog = comet-gog_heroic;
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "heroic-unwrapped";
-  version = "2.22.1";
+  version = "2.22.2";
 
   src = fetchFromGitHub {
     owner = "Heroic-Games-Launcher";
     repo = "HeroicGamesLauncher";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-CpbCXmvfwXT16ZG/6fwPWSjBwK02ykJ/GuZk1VcW+tU=";
+    hash = "sha256-0miJZ5PcwdLimRc40xoWDzSdo7UeGCkCBxL5MXu2+wI=";
   };
 
   pnpmDeps = fetchPnpmDeps {
@@ -43,11 +44,10 @@ stdenv.mkDerivation (finalAttrs: {
       pname
       version
       src
-      patches
       ;
     inherit pnpm;
     fetcherVersion = 3;
-    hash = "sha256-NrglT9vtDMAYXmZ4G3vifvLXu1yS6xbp+cqE6B6vQFc=";
+    hash = "";
   };
 
   nativeBuildInputs = [
@@ -56,11 +56,6 @@ stdenv.mkDerivation (finalAttrs: {
     pnpm
     python3
     makeWrapper
-  ];
-
-  patches = [
-    # Make Heroic create Steam shortcuts (to non-steam games) with the correct path to heroic.
-    ./fix-non-steam-shortcuts.patch
   ];
 
   env.ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
@@ -96,7 +91,7 @@ stdenv.mkDerivation (finalAttrs: {
 
     ln -s \
       "${lib.getExe gogdl}" \
-      "${lib.getExe legendary}" \
+      "${lib.getExe legendary-gl}" \
       "${lib.getExe nile}" \
       "${lib.getExe comet-gog}" \
       "${lib.getExe vulkan-helper}" \
@@ -131,7 +126,7 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru = {
-    inherit epic-integration legendary;
+    inherit epic-integration legendary-gl;
   };
 
   meta = {
