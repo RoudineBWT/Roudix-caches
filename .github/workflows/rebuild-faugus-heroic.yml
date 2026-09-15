@@ -1,0 +1,75 @@
+name: Rebuild faugus & heroic
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Quoi rebuild"
+        type: choice
+        default: both
+        options:
+          - both
+          - faugus
+          - heroic
+  push:
+    branches: [main]
+    paths:
+      - "pkgs/faugus/**"
+      - "pkgs/heroic/**"
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - uses: cachix/cachix-action@v15
+        with:
+          name: roudix
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      # ── déclenché par push: ne build que ce qui a changé ────────────────────
+      - name: Detect changed paths
+        id: changed
+        if: github.event_name == 'push'
+        run: |
+          BEFORE="${{ github.event.before }}"
+          if [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            # premier push / historique réécrit : on ne sait pas ce qui a changé, on build tout
+            CHANGED=$'pkgs/faugus/\npkgs/heroic/'
+          else
+            CHANGED=$(git diff --name-only "$BEFORE" "${{ github.sha }}")
+          fi
+
+          faugus=false
+          heroic=false
+          echo "$CHANGED" | grep -q '^pkgs/faugus/' && faugus=true
+          echo "$CHANGED" | grep -q '^pkgs/heroic/' && heroic=true
+
+          echo "faugus=$faugus" >> "$GITHUB_OUTPUT"
+          echo "heroic=$heroic" >> "$GITHUB_OUTPUT"
+
+      # ── déclenché à la main: on suit le choix du menu ───────────────────────
+      - name: Resolve manual target
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          target="${{ inputs.target }}"
+          echo "faugus=$([[ "$target" == "both" || "$target" == "faugus" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "heroic=$([[ "$target" == "both" || "$target" == "heroic" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Build faugus
+        if: steps.changed.outputs.faugus == 'true' || steps.manual.outputs.faugus == 'true'
+        run: nix build .#faugus --print-build-logs
+
+      - name: Build heroic-custom
+        if: steps.changed.outputs.heroic == 'true' || steps.manual.outputs.heroic == 'true'
+        run: nix build .#heroic-custom --print-build-logs
