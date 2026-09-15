@@ -15,7 +15,6 @@
   electron_43,
   vulkan-helper,
   gogdl,
-  legendary-gl,
   nile,
   comet-gog_heroic,
   umu-launcher,
@@ -26,6 +25,7 @@ let
   electron = electron_43;
 
   epic-integration = callPackage ./epic-integration.nix { };
+  legendary-gl = callPackage ./legendary-gl.nix { };
   comet-gog = comet-gog_heroic;
 in
 stdenv.mkDerivation (finalAttrs: {
