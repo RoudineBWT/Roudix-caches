@@ -45,13 +45,13 @@ in
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "modrinth-app-unwrapped";
-  version = "0.20.5"; # <- bumped by CI / nix-update
+  version = "0.21.2"; # <- bumped by CI / nix-update
 
   src = fetchFromGitHub {
     owner = "modrinth";
     repo = "code";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-LhXpd2J0hIyPKwcR4llC2uxmPcYBa12Fvakth7juRaE="; # <- bumped by CI / nix-update
+    hash = "sha256-H0GuOf8brllWM3qEeMI4S3Eib1hi65GVMcBnI8yy1yI="; # <- bumped by CI / nix-update
   };
 
   patches = [
@@ -75,7 +75,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --replace-fail '1.0.0-local' '${finalAttrs.version}'
   '';
 
-  cargoHash = "sha256-HQYHggmfKlzhgKoP/lnC8wlcUc5BQ8sAjgaKuTUZZus="; # <- bumped by CI / nix-update
+  cargoHash = "sha256-hpgOKwrBS+DbTNIyCErpbT/TiQNqp1UuEvTrX5ubO0o="; # <- bumped by CI / nix-update
 
   mitmCache = gradle.fetchDeps {
     inherit (finalAttrs) pname;
