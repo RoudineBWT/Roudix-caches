@@ -45,13 +45,13 @@ in
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "modrinth-app-unwrapped";
-  version = "0.21.5"; # <- bumped by CI / nix-update
+  version = "0.21.6"; # <- bumped by CI / nix-update
 
   src = fetchFromGitHub {
     owner = "modrinth";
     repo = "code";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-4t7+d35spkCZpHBKUd/E2YXHj73mEzxtLyRmKzmEObk="; # <- bumped by CI / nix-update
+    hash = "sha256-SBrnyAqbsgAhzF/7p3OalvhJVN/LyHRo9I7m3MEWVxg="; # <- bumped by CI / nix-update
   };
 
   patches = [
