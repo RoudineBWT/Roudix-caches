@@ -45,7 +45,7 @@ jobs:
           PRISM_TAG=$(gh release view \
             --repo PrismLauncher/PrismLauncher \
             --json tagName -q .tagName)
-          # pas de préfixe "v" sur les tags PrismLauncher, contrairement à modrinth/heroic
+          # pas de préfixe "v" sur les tags PrismLauncher, contrairement à heroic
           PRISM_NEW="$PRISM_TAG"
 
           echo "prism=$PRISM_NEW"     >> "$GITHUB_OUTPUT"

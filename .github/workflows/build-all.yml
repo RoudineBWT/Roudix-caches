@@ -9,10 +9,6 @@ name: Build all & push to Cachix
 #     explicitement)
 #   - workflow_dispatch (bouton manuel)
 #
-# Auto-réparation : si modrinth échoue (typiquement parce que Gradle a changé
-# de version Kotlin dans nixpkgs et que deps.json est périmé), on régénère
-# pkgs/modrinth/deps.json avec le script officiel de nixpkgs, on commit, puis
-# on rebuild.
 
 on:
   workflow_call:
@@ -52,44 +48,9 @@ jobs:
           name: roudix
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-      # ── Modrinth d'abord (le plus fragile) ────────────────────────────────
-      - name: Build modrinth (régénère deps.json si besoin)
-        run: |
-          set -u
-          TARGETS=(.#modrinth-app-custom .#modrinth-app-wrapped-custom)
-
-          if nix build "${TARGETS[@]}" --no-link --print-build-logs; then
-            echo "modrinth OK, deps.json encore valide."
-            exit 0
-          fi
-
-          echo "::warning::modrinth a échoué, tentative de régénération de deps.json"
-
-          # Le script de mise à jour Gradle de nixpkgs isole le build avec
-          # bubblewrap ; ubuntu-24.04 bloque les user namespaces non privilégiés.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-
-          nix build .#modrinth-app-custom.mitmCache.updateScript --out-link /tmp/update-deps
-          /tmp/update-deps "$PWD/pkgs/modrinth/deps.json"
-
-          if git diff --quiet -- pkgs/modrinth/deps.json; then
-            echo "::error::deps.json inchangé après régénération : l'échec vient d'autre chose (voir les logs ci-dessus)."
-            exit 1
-          fi
-
-          git diff --stat -- pkgs/modrinth/deps.json
-          nix build "${TARGETS[@]}" --no-link --print-build-logs
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pkgs/modrinth/deps.json
-          git commit -m "modrinth-app: regenerate deps.json (gradle/kotlin bump)"
-          git pull --rebase origin main
-          git push origin HEAD:main
-
-      # ── Le reste. --keep-going : un échec ne bloque pas les autres paquets,
-      # ce qui est déjà construit part quand même sur Cachix. ────────────────
-      - name: Build everything else
+      # --keep-going : un échec ne bloque pas les autres paquets,
+      # ce qui est déjà construit part quand même sur Cachix.
+      - name: Build all packages
         run: |
           nix build \
             .#heroic-custom \

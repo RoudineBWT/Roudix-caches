@@ -9,7 +9,6 @@ This repo contains a Nix flake (`flake.nix` / `flake.lock`) and package definiti
 - **Faugus** — game launcher
 - **Heroic** — Epic/GOG/Amazon Games launcher
 - **Lutris** — game manager
-- **Modrinth** — Minecraft mod manager (App)
 - **OpenLinkHub** — Corsair peripherals control
 - **PrismLauncher** — Minecraft launcher
 - **scxctl.nix** — sched-ext (scx) scheduler control tool
@@ -62,7 +61,7 @@ cachix use roudix
 
 ## Installing the packages
 
-This flake doesn't expose every package as a top-level flake output — only `scxctl` does (`roudix-caches.packages.<system>.scxctl`), which is how it's consumed in Roudix's own `flake.nix` for the scheduler switcher. Everything else under `pkgs/` (Faugus, Heroic, Lutris, Modrinth, PrismLauncher, OpenLinkHub) is meant to be pulled in with `callPackage` from another NixOS or Home Manager config.
+This flake doesn't expose every package as a top-level flake output — only `scxctl` does (`roudix-caches.packages.<system>.scxctl`), which is how it's consumed in Roudix's own `flake.nix` for the scheduler switcher. Everything else under `pkgs/` (Faugus, Heroic, Lutris, PrismLauncher, OpenLinkHub) is meant to be pulled in with `callPackage` from another NixOS or Home Manager config.
 
 ### 1. Add it as a flake input
 
@@ -93,9 +92,9 @@ in
 
 Use `home.packages` in a Home Manager module, or `environment.systemPackages` in a NixOS module — either works, `callPackage` doesn't care.
 
-### 3. PrismLauncher (and Modrinth) need the wrapped variant
+### 3. PrismLauncher needs the wrapped variant
 
-These two ship an unwrapped build plus a `wrapped.nix` that adds the runtime libs (Vulkan/OpenGL/glfw) they need to actually run. Don't `callPackage` the folder directly — go through `wrapped.nix` and pass it the unwrapped build:
+It ships an unwrapped build plus a `wrapped.nix` that adds the runtime libs (Vulkan/OpenGL/glfw) it needs to actually run. Don't `callPackage` the folder directly — go through `wrapped.nix` and pass it the unwrapped build:
 
 ```nix
 (callPackage "${roudixPkgs}/prismlauncher/wrapped.nix" {

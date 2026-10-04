@@ -28,14 +28,10 @@
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
         openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
         scx           = pkgs-scx.scx;
-        modrinth-app-custom = pkgs.callPackage ./pkgs/modrinth/default.nix { };
-        modrinth-app-wrapped-custom = pkgs.callPackage ./pkgs/modrinth/wrapped.nix {
-          modrinth-app-unwrapped = self.packages.${system}.modrinth-app-custom;
-          };
-          prismlauncher-custom = pkgs.callPackage ./pkgs/prismlauncher/default.nix { };
-           prismlauncher-wrapped-custom = pkgs.callPackage ./pkgs/prismlauncher/wrapped.nix {
-             prismlauncher-unwrapped = self.packages.${system}.prismlauncher-custom;
-           };
+        prismlauncher-custom = pkgs.callPackage ./pkgs/prismlauncher/default.nix { };
+        prismlauncher-wrapped-custom = pkgs.callPackage ./pkgs/prismlauncher/wrapped.nix {
+          prismlauncher-unwrapped = self.packages.${system}.prismlauncher-custom;
+        };
       };
     };
 }
