@@ -57,7 +57,7 @@ jobs:
             .#scxctl \
             .#faugus \
             .#openlinkhub \
-            .#scx \
+            .#scx.full \
             .#prismlauncher-custom \
             .#prismlauncher-wrapped-custom \
             --no-link --keep-going --print-build-logs
