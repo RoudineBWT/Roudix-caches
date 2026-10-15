@@ -4,14 +4,12 @@
 
 ## What's in this repo
 
-This repo contains a Nix flake (`flake.nix` / `flake.lock`) and package definitions (`pkgs/`) built specifically for Roudix — mainly gaming-related packages not in nixpkgs, patched versions, or distro-specific builds. Currently it packages:
+This repo contains a Nix flake (`flake.nix` / `flake.lock`) and package definitions (`pkgs/`) built specifically for Roudix — only packages that differ from nixpkgs (newer version, custom patch, different packaging). Anything identical to nixpkgs (Heroic, PrismLauncher, Lutris…) is taken straight from nixpkgs and `cache.nixos.org`. Currently it packages:
 
-- **Faugus** — game launcher
-- **Heroic** — Epic/GOG/Amazon Games launcher
-- **Lutris** — game manager
-- **OpenLinkHub** — Corsair peripherals control
-- **PrismLauncher** — Minecraft launcher
-- **scxctl.nix** — sched-ext (scx) scheduler control tool
+- **Faugus** — game launcher (with `lsfg-vk` / `umu-run` path integration)
+- **OpenLinkHub** — Corsair peripherals control (upstream binary release)
+- **scxctl.nix** — sched-ext (scx) scheduler control tool, built with a recent stable rustc
+- **scx** — scheduler suite taken from `nixpkgs` `staging-next`
 
 A GitHub Actions workflow (`.github/workflows`) builds these packages in CI and automatically pushes them to the `roudix.cachix.org` cache, so you don't have to compile everything locally.
 
@@ -61,7 +59,7 @@ cachix use roudix
 
 ## Installing the packages
 
-This flake doesn't expose every package as a top-level flake output — only `scxctl` does (`roudix-caches.packages.<system>.scxctl`), which is how it's consumed in Roudix's own `flake.nix` for the scheduler switcher. Everything else under `pkgs/` (Faugus, Heroic, Lutris, PrismLauncher, OpenLinkHub) is meant to be pulled in with `callPackage` from another NixOS or Home Manager config.
+The flake exposes `scxctl`, `scx`, `faugus` and `openlinkhub` as `roudix-caches.packages.<system>.<name>`. `scxctl` is how it's consumed in Roudix's own `flake.nix` for the scheduler switcher; the others can either be taken from the flake outputs or pulled in with `callPackage` from the `pkgs/` folder.
 
 ### 1. Add it as a flake input
 
@@ -83,8 +81,6 @@ let
 in
 {
   home.packages = with pkgs; [
-    (callPackage "${roudixPkgs}/heroic" {})
-    (callPackage "${roudixPkgs}/lutris" {})
     (callPackage "${roudixPkgs}/faugus" {})
   ];
 }
@@ -92,19 +88,7 @@ in
 
 Use `home.packages` in a Home Manager module, or `environment.systemPackages` in a NixOS module — either works, `callPackage` doesn't care.
 
-### 3. PrismLauncher needs the wrapped variant
-
-It ships an unwrapped build plus a `wrapped.nix` that adds the runtime libs (Vulkan/OpenGL/glfw) it needs to actually run. Don't `callPackage` the folder directly — go through `wrapped.nix` and pass it the unwrapped build:
-
-```nix
-(callPackage "${roudixPkgs}/prismlauncher/wrapped.nix" {
-  prismlauncher-unwrapped = callPackage "${roudixPkgs}/prismlauncher" {};
-})
-```
-
-Skipping `wrapped.nix` still builds and installs fine — it just crashes or runs software-rendered at launch, so this is the one gotcha worth remembering.
-
-### 4. Rebuild
+### 3. Rebuild
 
 ```bash
 sudo nixos-rebuild switch

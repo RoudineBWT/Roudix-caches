@@ -53,11 +53,8 @@ jobs:
       - name: Build all packages
         run: |
           nix build \
-            .#heroic-custom \
             .#scxctl \
             .#faugus \
             .#openlinkhub \
             .#scx.full \
-            .#prismlauncher-custom \
-            .#prismlauncher-wrapped-custom \
             --no-link --keep-going --print-build-logs

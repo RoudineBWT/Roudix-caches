@@ -6,7 +6,7 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { nixpkgs, nixpkgs-scx, rust-overlay, self, ... }:
+  outputs = { nixpkgs, nixpkgs-scx, rust-overlay, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -23,15 +23,10 @@
       };
     in {
       packages.x86_64-linux = {
-        heroic-custom = pkgs.callPackage ./pkgs/heroic/default.nix {};
         scxctl        = pkgs.callPackage ./pkgs/scxctl.nix { inherit rustPlatform; };
         faugus        = pkgs.callPackage ./pkgs/faugus/default.nix {};
         openlinkhub   = pkgs.callPackage ./pkgs/openlinkhub/default.nix {};
         scx           = pkgs-scx.scx;
-        prismlauncher-custom = pkgs.callPackage ./pkgs/prismlauncher/default.nix { };
-        prismlauncher-wrapped-custom = pkgs.callPackage ./pkgs/prismlauncher/wrapped.nix {
-          prismlauncher-unwrapped = self.packages.${system}.prismlauncher-custom;
-        };
       };
     };
 }
