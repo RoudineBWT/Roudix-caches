@@ -27,14 +27,22 @@ in pkgs.stdenv.mkDerivation {
     inherit sha256;
   };
 
-  nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-  buildInputs       = [ pkgs.udev pkgs.pipewire ];
+  # autoPatchelfHook est volontairement absent : patchelf réorganise les
+  # en-têtes de ce binaire Go non-PIE et le résultat segfault dans ld.so
+  # (dl_main, SEGV_ACCERR) avec glibc 2.44. Le binaire reste donc intact et
+  # est lancé via le loader de glibc avec --library-path.
+  nativeBuildInputs = [ pkgs.makeWrapper ];
+  dontPatchELF = true;
+  dontStrip    = true;
 
   installPhase = ''
     mkdir -p $out/opt/OpenLinkHub
     cp -r . $out/opt/OpenLinkHub
+
     mkdir -p $out/bin
-    ln -s $out/opt/OpenLinkHub/OpenLinkHub $out/bin/OpenLinkHub
+    makeWrapper ${pkgs.glibc}/lib/ld-linux-x86-64.so.2 $out/bin/OpenLinkHub \
+      --add-flags "--library-path ${lib.makeLibraryPath [ pkgs.glibc pkgs.udev pkgs.pipewire pkgs.stdenv.cc.cc.lib ]}" \
+      --add-flags "$out/opt/OpenLinkHub/OpenLinkHub"
 
     # Intègre le script de setup avec le bon $out résolu
     mkdir -p $out/lib/systemd
