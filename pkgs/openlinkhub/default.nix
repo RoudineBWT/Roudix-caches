@@ -2,8 +2,8 @@
 
 let
   # ── Ces deux valeurs sont mises à jour automatiquement par le GitHub Action ──
-  version = "0.9.4";
-  sha256  = "sha256-S/wlbLI18IFupkRrQ3Mk0Pro0502HfW3dJwoHEVplCw=";
+  version = "0.9.5";
+  sha256  = "sha256-2Rqvr+mbW8aagtrw3zd3S+UcQ+QMs+OmOcbV7Uvq1OQ=";
   # ─────────────────────────────────────────────────────────────────────────────
 
   setupScript = pkgs.writeShellScript "openlinkhub-setup" ''
