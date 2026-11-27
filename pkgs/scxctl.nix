@@ -6,16 +6,16 @@
 
 rustPlatform.buildRustPackage rec {
   pname   = "scxctl";
-  version   = "1.1.3";
+  version   = "1.2.0";
 
   src = fetchFromGitHub {
     owner  = "sched-ext";
     repo   = "scx-loader";
     rev    = "v${version}";
-    hash   = "sha256-NbTakrEdk3pundjk554QrUpKTXxQl6I8Y/IgmxjGKuw=";
+    hash   = "sha256-E0ktOABrxakMtC8rwO61Jq1M5agcEw21xqNDu3duNwc=";
   };
 
-  cargoHash = "sha256-N2bJBIqledSGxFmJQCBRIH6ZK0aGumGbL7kfrzgl7HI=";
+  cargoHash = "sha256-pRFbFOlJq/P7p6eJteQBEwuqYMreWbxW3bR0/rTBa5Y=";
 
   nativeBuildInputs = [ pkg-config ];
 
